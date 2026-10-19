@@ -59,30 +59,72 @@ In high-stakes enterprise domains like advertising, this pattern is dangerous:
 
 ## 🔬 Benchmark: Real-Time Latency & Tracing Breakdown
 
-Below is a live trace extracted via `get_cloud_trace` showing complete sub-millisecond execution observability:
+Below is a live distributed trace extracted via `get_cloud_trace` showing complete sub-millisecond execution observability for a single Smart Facade call (`audit_campaign_4level_shield`).
 
+Notice how the single high-level tool coordinates **4 distinct upstream gRPC queries** to Google Ads API while tracking exact network latency vs local execution overhead:
+
+```text
+Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
+├── 1. GoogleAdsService/Search (Campaign Level)           [1334.6 ms] ━━━━━━━━━━━━
+├── 2. GoogleAdsService/Search (AdGroups & Bids)          [ 375.4 ms]             ━━━━
+├── 3. GoogleAdsService/Search (RSAs & 15/4 Matrix)       [ 838.0 ms]                 ━━━━━━━━
+└── 4. GoogleAdsService/Search (Negative Keywords Shield) [ 397.3 ms]                         ━━━━
+```
+
+### Sanitized Trace Payload (`get_cloud_trace`):
 ```json
 {
-  "trace_id": "36afa63cbde1b76e0e5dec32bdf193b4",
-  "total_ms": 3269.6,
-  "google_ads_api_ms": 2871.8,  // 87.8% — Upstream Google Ads gRPC Search Stream
-  "own_code_ms": 397.8,         // 12.2% — Local FastMCP & Pydantic shield execution
+  "trace_id": "a30661d140600f1b54cde6c3d1fc8cc1",
+  "total_ms": 3378.7,
+  "google_ads_api_calls": 4,
+  "google_ads_api_ms": 2945.3,
+  "own_code_ms": 433.4,
+  "latency_breakdown": {
+    "network_grpc_wait": "87.2%",
+    "local_fastmcp_shield": "12.8%"
+  },
   "spans": [
     {
-      "span_id": "6b1f33fe1551a352",
-      "name": "tools/call get_campaigns",
+      "span_id": "9f42e8ddf09f0132",
+      "parent_span_id": null,
+      "name": "tools/call audit_campaign_4level_shield",
+      "duration_ms": 3378.7,
       "labels": {
-        "operator": "local_operator",
-        "session_id": "20261019T131819Z-9079",
-        "request_id": "IjOtKBq4cRoeKoajPvhldA",
-        "action_type": "READ"
+        "tool": "audit_campaign_4level_shield",
+        "action_type": "READ",
+        "gcp.project_id": "safe-ads-prod",
+        "operator": "[REDACTED]",
+        "session_id": "20261019T141746Z-7acf",
+        "sla_status": "DEGRADED"
       }
     },
     {
-      "span_id": "cdc19910a2add11c",
-      "parent_span_id": "6b1f33fe1551a352",
-      "name": "/google.ads.googleads.v24.services.GoogleAdsService/Search",
-      "labels": { "rpc.grpc.status_code": "0" }
+      "span_id": "c13ea22dda5f6e88",
+      "parent_span_id": "9f42e8ddf09f0132",
+      "name": "GoogleAdsService/Search (Campaign Level)",
+      "duration_ms": 1334.6,
+      "labels": { "rpc.system": "grpc", "rpc.grpc.status_code": "0" }
+    },
+    {
+      "span_id": "ce45cd75502167c2",
+      "parent_span_id": "9f42e8ddf09f0132",
+      "name": "GoogleAdsService/Search (AdGroups & Bids)",
+      "duration_ms": 375.4,
+      "labels": { "rpc.system": "grpc", "rpc.grpc.status_code": "0" }
+    },
+    {
+      "span_id": "3aac0efda8cd5253",
+      "parent_span_id": "9f42e8ddf09f0132",
+      "name": "GoogleAdsService/Search (RSAs & 15/4 Matrix)",
+      "duration_ms": 838.0,
+      "labels": { "rpc.system": "grpc", "rpc.grpc.status_code": "0" }
+    },
+    {
+      "span_id": "47f195265a727044",
+      "parent_span_id": "9f42e8ddf09f0132",
+      "name": "GoogleAdsService/Search (Negative Keywords Shield)",
+      "duration_ms": 397.3,
+      "labels": { "rpc.system": "grpc", "rpc.grpc.status_code": "0" }
     }
   ]
 }
