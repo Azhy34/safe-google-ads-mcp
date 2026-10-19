@@ -149,6 +149,21 @@ The tools mirror Google Ads operational hierarchy, split into granular objects a
 
 ---
 
+---
+
+## 🧠 Autonomous Agent Skills & Playbooks (`skills/`)
+
+While MCP tools provide the **execution layer** (the hands), these bundled Agent Skills provide the **deterministic business playbook** (the brain) for autonomous coding agents (Claude Code, Antigravity, Cursor):
+
+| Skill Name | SOP Path | Playbook Description |
+|---|---|---|
+| **🛡️ 4-Level Campaign Auditor** | [`skills/google-ads-campaign-auditor/`](skills/google-ads-campaign-auditor/SKILL.md) | Standard procedure for running Preflight gate checks and diagnosing campaign quality scores (100/100). |
+| **🪜 Deterministic Bid Ladder** | [`skills/google-ads-bid-ladder/`](skills/google-ads-bid-ladder/SKILL.md) | Stepping CPC bid ceilings strictly by `±0.05 EUR` on `TARGET_SPEND` campaigns with Impression Share guards. |
+| **✍️ 15/4 Golden RSA Writer** | [`skills/google-ads-rsa-writer/`](skills/google-ads-rsa-writer/SKILL.md) | Enforces 15 headlines, 4 descriptions, Dynamic Keyword Insertion (DKI) pinned to Position 1, and atomic rotation. |
+| **🔍 Search Terms & GA4 Miner** | [`skills/google-ads-search-terms-miner/`](skills/google-ads-search-terms-miner/SKILL.md) | Cross-referencing ad spend with GA4 on-site engagement to harvest negative keywords and eliminate budget leaks. |
+
+---
+
 ## 🚀 Quickstart & Installation
 
 ### 1. Clone & Install
