@@ -1,4 +1,5 @@
 import os
+os.environ["MCP_SERVER_PROCESS"] = "1"
 import sys
 import io
 import json
@@ -210,7 +211,6 @@ def create_search_campaign(
     res = create_campaign_func(req)
     return res.model_dump_json(indent=2)
 
-
 # --- LEVEL 2: ADGROUP & BIDDING TOOLS ---
 
 # [чтение] Группы объявлений с базовыми CPC-ставками и статусом показа. В журнале: list_ad_groups.
@@ -230,7 +230,7 @@ def get_ad_groups(campaign_id: Optional[str] = None) -> str:
 def step_bid_threshold(campaign_id: str, direction: Literal["+0.05", "-0.05"] = "+0.05") -> str:
     """
     Steps the campaign's Maximize Clicks CPC ceiling (target_spend.cpc_bid_ceiling_micros)
-    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for all Target Account
+    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for all MoonBloom
     campaigns, which use TARGET_SPEND; ad group bids are ignored under that strategy.
     """
     req, rejected = build_request("step_campaign_cpc_ceiling", CampaignCeilingStepRequest, campaign_id=campaign_id, direction=direction)

@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import random
 import grpc
@@ -117,6 +118,12 @@ def get_ads_client(login_id: str = None) -> GoogleAdsClient:
     Uses use_proto_plus=True for high-performance protobuf access.
     Every service client it hands out carries the GoogleAdsCallInterceptor, so the 57 get_service() calls in tools/ need no change.
     """
+    if os.environ.get("MCP_SERVER_PROCESS") != "1" and "unittest" not in sys.modules and "pytest" not in sys.modules and os.environ.get("PYTEST_CURRENT_TEST") is None:
+        raise RuntimeError(
+            "DIRECT_GOOGLE_ADS_API_BLOCKED: Direct calls to Google Ads API outside the MCP server process are strictly forbidden by project rules. "
+            "All Google Ads operations must be executed exclusively through registered FastMCP tools via call_mcp_tool to ensure zero-hallucination shields, W3C tracing, and audit.jsonl logging."
+        )
+
     credentials = {
         'developer_token': os.environ.get('GOOGLE_ADS_DEVELOPER_TOKEN'),
         'refresh_token': os.environ.get('GOOGLE_ADS_REFRESH_TOKEN'),
