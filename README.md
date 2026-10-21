@@ -132,14 +132,14 @@ Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
 
 ---
 
-## 🧰 38 Custom FastMCP Tools Catalog
+## 🧰 39 Custom FastMCP Tools Catalog
 
 The tools mirror Google Ads operational hierarchy, split into granular objects and transactional Smart Facades:
 
 | Operational Level | Key MCP Tools | Responsibilities |
 |---|---|---|
 | **🚦 Gate & Health** | `preflight_log_check`, `analyze_tool_health` | Mandatory pre-flight lock; anomaly & error spike audit. |
-| **📢 Campaigns & Bids** | `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Campaign CPC ceilings stepped strictly by `±0.05 EUR`. |
+| **📢 Campaigns & Bids** | `create_search_campaign`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. |
 | **👥 Groups & Keywords** | `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `auto_fix_collisions_and_dupes` | Quality score audits, cross-campaign collision fixer. |
 | **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, atomic rotation (pauses oldest ad atomically). |
 | **🧩 Google Assets** | `create_price_asset`, `sync_price_extension`, `link_asset_to_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, image assets, sitelinks, and performance labeling. |

@@ -19,7 +19,10 @@ from core.config import CUSTOMER_ID
 from shield.error_shield import build_request
 from shield.telemetry import current_tool
 from shield import cloud_sink
-from shield.models_campaign import CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest, CampaignCeilingStepRequest, IdArguments
+from shield.models_campaign import (
+    CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest, CampaignCeilingStepRequest,
+    IdArguments, CreateSearchCampaignRequest
+)
 from shield.models_adgroup import AdGroupBidUpdateRequest, KeywordStatusUpdateRequest
 from shield.models_ad import DeployGoldenRSARequest
 from shield.models_asset import LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest
@@ -28,7 +31,8 @@ from shield.models_criterion import ApplyNegativeShieldRequest, RemoveNegativeKe
 from tools.campaign_tools import (
     list_campaigns, get_campaign_detail, 
     update_campaign_status, update_campaign_budget, step_campaign_cpc_ceiling,
-    get_campaign_targeting_overview as targeting_func
+    get_campaign_targeting_overview as targeting_func,
+    create_search_campaign as create_campaign_func
 )
 from tools.adgroup_tools import (
     list_ad_groups, update_ad_group_bid, update_keyword_status,
@@ -171,6 +175,41 @@ def get_campaign_targeting_overview(campaign_id: str = "24015242821") -> str:
         return rejected
     res = targeting_func(campaign_id)
     return res.model_dump_json(indent=2)
+
+# [запись] Создать новую поисковую кампанию с таргетингом, группой и ключами. В журнале: create_search_campaign.
+@mcp_tool()
+def create_search_campaign(
+    name: str,
+    ad_group_name: str,
+    budget_eur: float = 3.0,
+    cpc_ceiling_eur: float = 0.55,
+    status: Literal["PAUSED", "ENABLED"] = "PAUSED",
+    geo_target_constants: list[int] = [2276, 2040],
+    language_constants: list[int] = [1001],
+    keywords: list[str] = []
+) -> str:
+    """
+    Creates a new Google Ads Search campaign with dedicated budget, Maximize Clicks (TARGET_SPEND)
+    strategy with CPC ceiling, Clean Search network settings (Partners/Display OFF), geo/language criteria,
+    dayparting schedule (08:00 - 01:00), an initial ad group and clean phrase/exact keywords.
+    """
+    req, rejected = build_request(
+        "create_search_campaign",
+        CreateSearchCampaignRequest,
+        name=name,
+        ad_group_name=ad_group_name,
+        budget_eur=budget_eur,
+        cpc_ceiling_eur=cpc_ceiling_eur,
+        status=status,
+        geo_target_constants=geo_target_constants,
+        language_constants=language_constants,
+        keywords=keywords
+    )
+    if rejected:
+        return rejected
+    res = create_campaign_func(req)
+    return res.model_dump_json(indent=2)
+
 
 # --- LEVEL 2: ADGROUP & BIDDING TOOLS ---
 

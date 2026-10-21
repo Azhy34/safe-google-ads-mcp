@@ -12,7 +12,8 @@ from shield.error_shield import ServiceResult, handle_google_ads_errors
 from shield.models_campaign import (
     GoogleCampaignRecord, CampaignBudgetRecord, 
     CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest,
-    CampaignTargetingRecord, CampaignCeilingStepRequest
+    CampaignTargetingRecord, CampaignCeilingStepRequest,
+    CreateSearchCampaignRequest, CreateCampaignResponse
 )
 
 CEILING_MIN_MICROS = 100_000    # 0.10 EUR
@@ -302,4 +303,162 @@ def get_campaign_targeting_overview(campaign_id: str = "24015242821", customer_i
         targeted_languages=languages,
         ad_schedules=schedules,
         device_modifiers=devices
+    )
+
+@handle_google_ads_errors
+def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = CUSTOMER_ID) -> CreateCampaignResponse:
+    """
+    Creates a new Google Ads Search campaign with dedicated budget, Maximize Clicks (TARGET_SPEND)
+    strategy with CPC ceiling, Clean Search network settings (Partners/Display OFF), geo/language criteria,
+    dayparting schedule (08:00 - 01:00), an initial ad group and clean phrase/exact keywords.
+    """
+    import time
+    client = get_ads_client()
+    
+    # 1. Create Dedicated Budget
+    budget_service = client.get_service("CampaignBudgetService")
+    budget_op = client.get_type("CampaignBudgetOperation")
+    budget = budget_op.create
+    budget.name = f"Budget - {req.name} #{int(time.time())}"
+    budget.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
+    budget.amount_micros = eur_to_micros(req.budget_eur)
+    budget.explicitly_shared = False
+    
+    budget_res = budget_service.mutate_campaign_budgets(customer_id=customer_id, operations=[budget_op])
+    budget_resource_name = budget_res.results[0].resource_name
+    budget_id = budget_resource_name.split("/")[-1]
+    
+    # 2. Create Campaign
+    campaign_service = client.get_service("CampaignService")
+    campaign_op = client.get_type("CampaignOperation")
+    campaign = campaign_op.create
+    campaign.name = req.name
+    campaign.campaign_budget = budget_resource_name
+    campaign.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.SEARCH
+    campaign.status = client.enums.CampaignStatusEnum.PAUSED if req.status == "PAUSED" else client.enums.CampaignStatusEnum.ENABLED
+    
+    # Bidding strategy: TARGET_SPEND with CPC ceiling
+    campaign.bidding_strategy_type = client.enums.BiddingStrategyTypeEnum.TARGET_SPEND
+    campaign.target_spend.cpc_bid_ceiling_micros = eur_to_micros(req.cpc_ceiling_eur)
+    
+    # Clean Search Network settings (no display, no partners)
+    campaign.network_settings.target_google_search = True
+    campaign.network_settings.target_search_network = False
+    campaign.network_settings.target_content_network = False
+    campaign.network_settings.target_partner_search_network = False
+    
+    # Positive geo target type: PRESENCE (only people physically in targeted locations)
+    campaign.geo_target_type_setting.positive_geo_target_type = client.enums.PositiveGeoTargetTypeEnum.PRESENCE
+    campaign.geo_target_type_setting.negative_geo_target_type = client.enums.NegativeGeoTargetTypeEnum.PRESENCE_OR_INTEREST
+    
+    campaign_res = campaign_service.mutate_campaigns(customer_id=customer_id, operations=[campaign_op])
+    campaign_resource_name = campaign_res.results[0].resource_name
+    campaign_id = campaign_resource_name.split("/")[-1]
+    
+    # 3. Add Targeting Criteria (Locations, Languages, Dayparting Schedule)
+    crit_service = client.get_service("CampaignCriterionService")
+    crit_ops = []
+    
+    # Targeted Geo Constants
+    for geo_id in req.geo_target_constants:
+        op = client.get_type("CampaignCriterionOperation")
+        crit = op.create
+        crit.campaign = campaign_resource_name
+        crit.location.geo_target_constant = f"geoTargetConstants/{geo_id}"
+        crit_ops.append(op)
+        
+    # Targeted Languages
+    for lang_id in req.language_constants:
+        op = client.get_type("CampaignCriterionOperation")
+        crit = op.create
+        crit.campaign = campaign_resource_name
+        crit.language.language_constant = f"languageConstants/{lang_id}"
+        crit_ops.append(op)
+        
+    # Dayparting Schedule: 08:00 - 24:00 and 00:00 - 01:00 for Monday-Sunday
+    all_days = [
+        client.enums.DayOfWeekEnum.MONDAY,
+        client.enums.DayOfWeekEnum.TUESDAY,
+        client.enums.DayOfWeekEnum.WEDNESDAY,
+        client.enums.DayOfWeekEnum.THURSDAY,
+        client.enums.DayOfWeekEnum.FRIDAY,
+        client.enums.DayOfWeekEnum.SATURDAY,
+        client.enums.DayOfWeekEnum.SUNDAY,
+    ]
+    for d in all_days:
+        # Window 1: 08:00 - 24:00
+        op1 = client.get_type("CampaignCriterionOperation")
+        c1 = op1.create
+        c1.campaign = campaign_resource_name
+        c1.ad_schedule.day_of_week = d
+        c1.ad_schedule.start_hour = 8
+        c1.ad_schedule.start_minute = client.enums.MinuteOfHourEnum.ZERO
+        c1.ad_schedule.end_hour = 24
+        c1.ad_schedule.end_minute = client.enums.MinuteOfHourEnum.ZERO
+        crit_ops.append(op1)
+        
+        # Window 2: 00:00 - 01:00
+        op2 = client.get_type("CampaignCriterionOperation")
+        c2 = op2.create
+        c2.campaign = campaign_resource_name
+        c2.ad_schedule.day_of_week = d
+        c2.ad_schedule.start_hour = 0
+        c2.ad_schedule.start_minute = client.enums.MinuteOfHourEnum.ZERO
+        c2.ad_schedule.end_hour = 1
+        c2.ad_schedule.end_minute = client.enums.MinuteOfHourEnum.ZERO
+        crit_ops.append(op2)
+        
+    if crit_ops:
+        crit_service.mutate_campaign_criteria(customer_id=customer_id, operations=crit_ops)
+        
+    # 4. Create Initial Ad Group
+    ag_service = client.get_service("AdGroupService")
+    ag_op = client.get_type("AdGroupOperation")
+    ag = ag_op.create
+    ag.name = req.ad_group_name
+    ag.campaign = campaign_resource_name
+    ag.status = client.enums.AdGroupStatusEnum.ENABLED
+    ag.type_ = client.enums.AdGroupTypeEnum.SEARCH_STANDARD
+    
+    ag_res = ag_service.mutate_ad_groups(customer_id=customer_id, operations=[ag_op])
+    ad_group_resource_name = ag_res.results[0].resource_name
+    ad_group_id = ad_group_resource_name.split("/")[-1]
+    
+    # 5. Add Initial Keywords
+    kw_count = 0
+    if req.keywords:
+        agc_service = client.get_service("AdGroupCriterionService")
+        agc_ops = []
+        for kw in req.keywords:
+            kw_clean = kw.strip()
+            if not kw_clean:
+                continue
+            op = client.get_type("AdGroupCriterionOperation")
+            agc = op.create
+            agc.ad_group = ad_group_resource_name
+            agc.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+            
+            if kw_clean.startswith("[") and kw_clean.endswith("]"):
+                agc.keyword.text = kw_clean[1:-1].strip()
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.EXACT
+            elif kw_clean.startswith('"') and kw_clean.endswith('"'):
+                agc.keyword.text = kw_clean[1:-1].strip()
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+            else:
+                agc.keyword.text = kw_clean
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+            agc_ops.append(op)
+            
+        if agc_ops:
+            agc_service.mutate_ad_group_criteria(customer_id=customer_id, operations=agc_ops)
+            kw_count = len(agc_ops)
+            
+    return CreateCampaignResponse(
+        campaign_id=campaign_id,
+        campaign_resource_name=campaign_resource_name,
+        budget_id=budget_id,
+        ad_group_id=ad_group_id,
+        status="PAUSED" if req.status == "PAUSED" else "ENABLED",
+        cpc_ceiling_eur=req.cpc_ceiling_eur,
+        keywords_count=kw_count
     )
