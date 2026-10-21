@@ -349,7 +349,10 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
     
     # Positive geo target type: PRESENCE (only people physically in targeted locations)
     campaign.geo_target_type_setting.positive_geo_target_type = client.enums.PositiveGeoTargetTypeEnum.PRESENCE
-    campaign.geo_target_type_setting.negative_geo_target_type = client.enums.NegativeGeoTargetTypeEnum.PRESENCE_OR_INTEREST
+    campaign.geo_target_type_setting.negative_geo_target_type = client.enums.NegativeGeoTargetTypeEnum.PRESENCE
+    
+    # EU declaration standard
+    campaign.contains_eu_political_advertising = client.enums.EuPoliticalAdvertisingStatusEnum.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
     
     campaign_res = campaign_service.mutate_campaigns(customer_id=customer_id, operations=[campaign_op])
     campaign_resource_name = campaign_res.results[0].resource_name
