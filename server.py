@@ -24,10 +24,17 @@ from shield.models_campaign import (
     CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest, CampaignCeilingStepRequest,
     IdArguments, CreateSearchCampaignRequest
 )
-from shield.models_adgroup import AdGroupBidUpdateRequest, KeywordStatusUpdateRequest
+from shield.models_adgroup import (
+    AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest
+)
 from shield.models_ad import DeployGoldenRSARequest
-from shield.models_asset import LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest
-from shield.models_criterion import ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest
+from shield.models_asset import (
+    LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
+    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
+)
+from shield.models_criterion import (
+    ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest, SyncSharedNegativeListRequest
+)
 
 from tools.campaign_tools import (
     list_campaigns, get_campaign_detail, 
@@ -37,8 +44,11 @@ from tools.campaign_tools import (
 )
 from tools.adgroup_tools import (
     list_ad_groups, update_ad_group_bid, update_keyword_status,
-    get_ad_group_keywords as adgroup_keywords_func
+    get_ad_group_keywords as adgroup_keywords_func,
+    create_ad_group as create_adgroup_func,
+    add_ad_group_keywords as add_keywords_func
 )
+
 from tools.rsa_tools import list_campaign_ads, deploy_golden_rsa as rsa_deploy_func
 from tools.asset_tools import (
     list_account_assets, 
@@ -49,12 +59,17 @@ from tools.asset_tools import (
     unlink_asset_from_entity as unlink_func,
     create_price_asset as create_price_func,
     sync_price_extension as sync_price_func,
+    preview_sitelink_assets as preview_sitelinks_func,
+    create_sitelink_assets as create_sitelinks_func,
+    create_callout_assets as create_callouts_func,
+    create_structured_snippet_asset as create_snippet_func,
     get_campaign_assets_overview as assets_overview_func
 )
 from tools.negative_tools import (
     apply_negative_shield as neg_shield_func,
     add_negative_keywords as add_neg_func,
     remove_negative_keyword as remove_neg_func,
+    sync_shared_negative_list as sync_shared_neg_func,
     mine_search_terms,
     audit_campaign_4level_shield as audit_func,
     get_daily_performance as daily_perf_func,
@@ -71,6 +86,16 @@ from tools.observability_tools import (
 )
 from tools.eval_tools import evaluate_agent_process as process_eval_func
 from tools.preflight_tools import preflight_log_check as preflight_func
+from tools.conversion_tools import (
+    check_enhanced_conversions_status as check_conversions_func,
+    upload_click_conversions as upload_conversions_func,
+    set_conversion_action_goal as set_conversion_goal_func
+)
+from shield.models_conversion import ClickConversionItem, SetConversionActionGoalRequest
+from tools.currency_tools import get_demand_gen_currency_floor as currency_floor_func
+from tools.geo_tools import audit_geo_physical_locations as geo_audit_func
+from tools.billing_tools import get_google_ads_invoices as invoices_func
+from tools.merchant_tools import check_merchant_center_link as mc_link_func
 
 # Initialize FastMCP Server
 mcp = FastMCP("Google Ads")
@@ -213,6 +238,50 @@ def create_search_campaign(
 
 # --- LEVEL 2: ADGROUP & BIDDING TOOLS ---
 
+# [запись] Создать новую группу объявлений в существующей кампании (опционально с ключами).
+@mcp_tool()
+def create_ad_group(
+    campaign_id: str,
+    name: str,
+    status: Literal["ENABLED", "PAUSED"] = "ENABLED",
+    keywords: list[str] = []
+) -> str:
+    """
+    Creates a new Search standard Ad Group in an existing campaign, optionally with initial positive keywords.
+    """
+    req, rejected = build_request(
+        "create_ad_group",
+        CreateAdGroupRequest,
+        campaign_id=campaign_id,
+        name=name,
+        status=status,
+        keywords=keywords
+    )
+    if rejected:
+        return rejected
+    res = create_adgroup_func(req)
+    return res.model_dump_json(indent=2)
+
+# [запись] Добавить позитивные ключевые слова (Exact [kw] или Phrase "kw") в группу объявлений.
+@mcp_tool()
+def add_ad_group_keywords(
+    ad_group_id: str,
+    keywords: list[str]
+) -> str:
+    """
+    Adds positive keywords (Exact [kw] or Phrase "kw") to an existing Ad Group.
+    """
+    req, rejected = build_request(
+        "add_ad_group_keywords",
+        AddKeywordsRequest,
+        ad_group_id=ad_group_id,
+        keywords=keywords
+    )
+    if rejected:
+        return rejected
+    res = add_keywords_func(req)
+    return res.model_dump_json(indent=2)
+
 # [чтение] Группы объявлений с базовыми CPC-ставками и статусом показа. В журнале: list_ad_groups.
 @mcp_tool()
 def get_ad_groups(campaign_id: Optional[str] = None) -> str:
@@ -225,12 +294,13 @@ def get_ad_groups(campaign_id: Optional[str] = None) -> str:
     res = list_ad_groups(campaign_id)
     return res.model_dump_json(indent=2)
 
+
 # [запись] Сдвинуть потолок CPC кампании на ±0.05 € (границы 0.10–3.00). Главный рычаг ставок: у всех кампаний Maximize Clicks. В журнале: step_campaign_cpc_ceiling.
 @mcp_tool()
 def step_bid_threshold(campaign_id: str, direction: Literal["+0.05", "-0.05"] = "+0.05") -> str:
     """
     Steps the campaign's Maximize Clicks CPC ceiling (target_spend.cpc_bid_ceiling_micros)
-    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for all MoonBloom
+    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for all Maximize Clicks campaigns
     campaigns, which use TARGET_SPEND; ad group bids are ignored under that strategy.
     """
     req, rejected = build_request("step_campaign_cpc_ceiling", CampaignCeilingStepRequest, campaign_id=campaign_id, direction=direction)
@@ -292,7 +362,7 @@ def get_campaign_ads(campaign_id: str = "24015242821") -> str:
     res = list_campaign_ads(campaign_id)
     return res.model_dump_json(indent=2)
 
-# [запись] Создать «золотое» RSA: 15 заголовков (≤30) + 4 описания (≤90), H1 закреплён с DKI, в URL ?coupon=WELCOME3; при 3 активных RSA ставит на паузу самое старое.
+# [запись] Создать «золотое» RSA: 15 заголовков (≤30) + 4 описания (≤90), H1 закреплён с DKI, в URL ; при 3 активных RSA ставит на паузу самое старое.
 @mcp_tool()
 def deploy_golden_rsa(
     ad_group_id: str,
@@ -300,15 +370,15 @@ def deploy_golden_rsa(
     headlines: List[str],
     descriptions: List[str],
     pinned_h1_dki: str,
-    path1: str = "Tapete",
-    path2: str = "Kinder"
+    path1: str = "Products",
+    path2: str = "Sale"
 ) -> str:
     """
     Deploys a Golden RSA with strict 15/4 validation:
     - Exactly 15 headlines (<=30 chars); headlines[0] must equal pinned_h1_dki
     - Exactly 4 descriptions (<=90 chars)
     - headlines[0] is pinned to Headline 1 and must use Dynamic Keyword Insertion ({KeyWord:...})
-    - Mandatory ?coupon=WELCOME3 in URL
+    - Mandatory  in URL
     - If 3 RSAs are already enabled, pauses only the oldest one, atomically with the create.
     """
     req, rejected = build_request(
@@ -417,6 +487,70 @@ def create_price_asset(
     res = create_price_func(req)
     return res.model_dump_json(indent=2)
 
+# [чтение] Дополнительные ссылки сайта: что создастся и привяжется к кампании, что уже есть, сколько их станет. Ничего не меняет. Всегда вызывать перед create_sitelink_assets.
+@mcp_tool()
+def preview_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
+    """
+    Read-only dry run of create_sitelink_assets: validates the sitelinks and says, per sitelink, whether it would be
+    created, reused (identical asset exists) or skipped (already linked), and how many sitelinks the campaign would
+    have. sitelinks: list of dicts with link_text (max 25), description1 (max 35), description2 (max 35) and final_url
+    (clean https address, no query string). 2 to 6 sitelinks per call.
+    """
+    req, rejected = build_request("preview_sitelink_assets", CreateSitelinkAssetsRequest, action_type="READ",
+                                  campaign_id=campaign_id, sitelinks=sitelinks)
+    if rejected:
+        return rejected
+    res = preview_sitelinks_func(req)
+    return res.model_dump_json(indent=2)
+
+# [запись] Создать дополнительные ссылки сайта (Sitelink-ассеты) и привязать их к кампании. Только после preview_sitelink_assets и «да» владельца с числом ссылок.
+@mcp_tool()
+def create_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
+    """
+    Creates the sitelink assets that do not exist yet and links all of them to the campaign. Identical existing assets
+    are reused and already linked ones skipped, so a repeat never makes duplicates. Same input as preview_sitelink_assets,
+    which must be called first. Writes to the ad account: only with the owner's explicit yes for this exact list.
+    """
+    req, rejected = build_request("create_sitelink_assets", CreateSitelinkAssetsRequest,
+                                  campaign_id=campaign_id, sitelinks=sitelinks)
+    if rejected:
+        return rejected
+    res = create_sitelinks_func(req)
+    return res.model_dump_json(indent=2)
+
+# [запись] Уточнения (Callout): создать недостающие тексты и привязать к кампании. Повтор не плодит дубли. Только после «да» владельца на точный список.
+@mcp_tool()
+def create_callout_assets(campaign_id: str, callouts: List[str]) -> str:
+    """
+    Creates callout assets that do not exist yet and links them to the campaign. An existing callout with the same
+    text is reused, and one that is already linked is skipped, so a repeat writes nothing. callouts: 2 to 10 texts,
+    each 1 to 25 characters. Writes to the ad account: only with the owner's explicit yes for this exact list.
+    """
+    req, rejected = build_request("create_callout_assets", CreateCalloutAssetsRequest,
+                                  campaign_id=campaign_id, callouts=callouts)
+    if rejected:
+        return rejected
+    res = create_callouts_func(req)
+    return res.model_dump_json(indent=2)
+
+# [запись] Одно структурированное описание: создать или переиспользовать и привязать к кампании. Заголовок только из списка Google.
+@mcp_tool()
+def create_structured_snippet_asset(campaign_id: str, header: str, values: List[str]) -> str:
+    """
+    Creates one structured snippet and links it to the campaign. An asset with the same header and the same set of
+    values is reused. header must be an exact Google string: German Typen, Modelle, Stile, Dienstleistungen, Marken,
+    Ausstattung, Kurse, Ziele, Studiengänge, Viertel, Versicherungsleistung, or English Types, Models, Styles, Brands,
+    Services. Motive, Reiseziele and Versicherungsschutz are rejected (HEADER_NOT_SUPPORTED). values: 3 to 10 texts,
+    each 1 to 25 characters, same forbidden words as callouts. If the campaign already has this header with different
+    values, nothing is written. Writes to the ad account: only with the owner's explicit yes.
+    """
+    req, rejected = build_request("create_structured_snippet_asset", CreateStructuredSnippetAssetRequest,
+                                  campaign_id=campaign_id, header=header, values=values)
+    if rejected:
+        return rejected
+    res = create_snippet_func(req)
+    return res.model_dump_json(indent=2)
+
 # [запись] Smart Facade: атомарная синхронизация цен (создание + поиск старых + отвязка + привязка)
 @mcp_tool()
 def sync_price_extension(
@@ -520,6 +654,31 @@ def remove_negative_keyword(campaign_id: str, keyword_text: str, match_type: Opt
     res = remove_neg_func(req)
     return res.model_dump_json(indent=2)
 
+# [запись] Синхронизировать общий список минус-слов аккаунта (SharedSetService, SharedCriterionService, CampaignSharedSetService).
+@mcp_tool()
+def sync_shared_negative_list(
+    list_name: str,
+    keywords: Optional[List[str]] = None,
+    match_type: str = "BROAD",
+    campaign_ids: Optional[List[str]] = None
+) -> str:
+    """
+    Synchronizes an account-level shared negative keyword list (SharedSetService, SharedCriterionService, CampaignSharedSetService).
+    Creates or reuses the shared set, adds new negative keywords without duplicates, and attaches the list to target campaigns atomically.
+    """
+    req, rejected = build_request(
+        "sync_shared_negative_list",
+        SyncSharedNegativeListRequest,
+        list_name=list_name,
+        keywords=keywords,
+        match_type=match_type,
+        campaign_ids=campaign_ids
+    )
+    if rejected:
+        return rejected
+    res = sync_shared_neg_func(req)
+    return res.model_dump_json(indent=2)
+
 # [чтение] Разбор поисковых запросов за N дней: нерелевантные без конверсий — кандидаты в минусы. В журнале: mine_search_terms.
 @mcp_tool()
 def mine_search_terms_and_harvest_negatives(campaign_id: str = "24015242821", days: int = 14) -> str:
@@ -539,7 +698,7 @@ def audit_campaign_4level_shield(campaign_id: str = "24015242821") -> str:
     Comprehensive 4-Level Quality Audit:
     - Level 1: Campaign budget, primary status, Maximize Clicks CPC ceiling
     - Level 2: Ad Groups (bids checked only for MANUAL_CPC)
-    - Level 3: RSA Copy (15/4 Matrix, WELCOME3 promo, Ad Strength notes)
+    - Level 3: RSA Copy (15/4 Matrix, PROMO10 promo, Ad Strength notes)
     - Level 4: Negative Keyword Shield strength
     Returns an objective 0-100% Quality Score.
     """
@@ -693,6 +852,122 @@ def search_keyword_ideas(seeds: List[str], language_id: str = "1001", location_i
     Default: German (1001), Germany (2276).
     """
     res = keyword_ideas_func(seeds, language_id, location_ids)
+    return res.model_dump_json(indent=2)
+
+# [чтение] Аудит Enhanced Conversions: статус conversion_tracking_setting, принятие Customer Data Terms, список основных/вторичных конверсий.
+@mcp_tool()
+def check_enhanced_conversions_status() -> str:
+    """
+    Audits the Google Ads account conversion tracking configuration, Enhanced Conversions
+    enablement settings, Customer Data Terms acceptance, and active primary/secondary conversion actions.
+    """
+    res = check_conversions_func()
+    return res.model_dump_json(indent=2)
+
+# [чтение] Определение минимального бюджетного порога для Demand Gen / Video кампаний в выбранной валюте через currency_constant.
+@mcp_tool()
+def get_demand_gen_currency_floor(currency_code: str = "EUR") -> str:
+    """
+    Queries Google Ads currency_constant resource to determine the exact minimum daily budget floor
+    for Demand Gen / Video campaigns in the specified currency (default: EUR).
+    """
+    res = currency_floor_func(currency_code)
+    return res.model_dump_json(indent=2)
+
+# [чтение] Аудит физического местоположения кликающих пользователей (user_location_view): поиск утечек бюджета вне DE/AT/FR/ES.
+@mcp_tool()
+def audit_geo_physical_locations(days: int = 30) -> str:
+    """
+    Audits physical user locations from user_location_view to detect budget wasted
+    on users outside target countries (e.g. clicks from US, TR, IN via 'Presence or Interest' default).
+    Returns breakdown of spend, clicks, and specific campaigns with foreign traffic leakage.
+    """
+    res = geo_audit_func(days)
+    return res.model_dump_json(indent=2)
+
+# [запись] Загрузка офлайн/серверных конверсий (например, оплата Stripe, заказ с витрины) в Google Ads через ConversionUploadService.
+@mcp_tool()
+def upload_click_conversion(
+    conversion_action_id: str,
+    conversion_date_time: str,
+    conversion_value: Optional[float] = None,
+    currency_code: str = "EUR",
+    order_id: Optional[str] = None,
+    gclid: Optional[str] = None,
+    gbraid: Optional[str] = None,
+    wbraid: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    ad_user_data_consent: str = "GRANTED",
+    ad_personalization_consent: str = "GRANTED"
+) -> str:
+    """
+    Uploads an offline/server-side click conversion (e.g. Stripe checkout purchase, backend order)
+    to Google Ads API via ConversionUploadService. Supports gclid, iOS gbraid/wbraid,
+    order_id deduplication, EU DMA Consent (ad_user_data, ad_personalization), and Enhanced Conversions hashed customer data.
+    """
+    item = ClickConversionItem(
+        conversion_action_id=conversion_action_id,
+        conversion_date_time=conversion_date_time,
+        conversion_value=conversion_value,
+        currency_code=currency_code,
+        order_id=order_id,
+        gclid=gclid,
+        gbraid=gbraid,
+        wbraid=wbraid,
+        email=email,
+        phone=phone,
+        ad_user_data_consent=ad_user_data_consent,
+        ad_personalization_consent=ad_personalization_consent
+    )
+    res = upload_conversions_func([item])
+    return res.model_dump_json(indent=2)
+
+# [запись] Управление статусом цели конверсии (Primary vs Secondary) для оптимизации алгоритмов Smart Bidding.
+@mcp_tool()
+def set_conversion_action_goal(
+    conversion_action_id: str,
+    primary_for_goal: bool,
+    status: Optional[Literal["ENABLED", "PAUSED", "HIDDEN", "REMOVED"]] = None,
+    include_in_conversions_metric: Optional[bool] = None
+) -> str:
+    """
+    Updates a Google Ads conversion action's goal optimization status (Primary vs Secondary),
+    serving status (ENABLED, PAUSED, HIDDEN, REMOVED), and inclusion in the Conversions metric.
+    Use this to set primary conversion actions for Smart Bidding optimization and demote legacy/secondary actions.
+    """
+    req, rejected = build_request(
+        "set_conversion_action_goal",
+        SetConversionActionGoalRequest,
+        conversion_action_id=conversion_action_id,
+        primary_for_goal=primary_for_goal,
+        status=status,
+        include_in_conversions_metric=include_in_conversions_metric
+    )
+    if rejected:
+        return rejected
+    res = set_conversion_goal_func(req)
+    return res.model_dump_json(indent=2)
+
+# [чтение] Получение официальных счетов-фактур (Invoices) и кредитовых нот Google Ads через InvoiceService и BillingSetup.
+@mcp_tool()
+def get_google_ads_invoices(year: Optional[str] = None, month: Optional[str] = None) -> str:
+    """
+    Retrieves official Google Ads invoices and credit memos via InvoiceService and BillingSetup,
+    including subtotal, VAT 19% / Reverse Charge, total EUR, and direct PDF download links for accounting & tax compliance.
+    """
+    res = invoices_func(year, month)
+    return res.model_dump_json(indent=2)
+
+# [чтение] Аудит связи аккаунта Google Ads с Google Merchant Center (ProductLink / ProductLinkInvitation).
+@mcp_tool()
+def check_merchant_center_link(merchant_id: Optional[str] = None) -> str:
+    """
+    Audits the Google Merchant Center product link status and link invitations
+    in Google Ads via ProductLink and ProductLinkInvitation resources.
+    Verifies that the product catalog and feed are actively connected for Shopping and Performance Max.
+    """
+    res = mc_link_func(merchant_id=merchant_id)
     return res.model_dump_json(indent=2)
 
 if __name__ == "__main__":

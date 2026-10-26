@@ -28,3 +28,21 @@ class ApplyNegativeShieldRequest(BaseModel):
     campaign_id: str = Field(..., description="Target Campaign ID")
     language: Literal["de", "fr", "es"] = Field(..., description="Target language shield")
     negative_words: Optional[List[str]] = Field(default=None, description="Optional custom negative words to append")
+
+class SyncSharedNegativeListRequest(BaseModel):
+    list_name: str = Field(..., min_length=1, max_length=255, description="Name of the account-level shared negative keyword list")
+    keywords: Optional[List[str]] = Field(default=None, description="Keywords to add or sync into this shared set")
+    match_type: Literal["EXACT", "PHRASE", "BROAD"] = Field(default="BROAD", description="Match type for newly added negative keywords")
+    campaign_ids: Optional[List[str]] = Field(default=None, description="Campaign IDs to attach this shared negative list to")
+
+class SharedNegativeListResponse(BaseModel):
+    customer_id: str = Field(..., description="Google Ads Customer ID")
+    shared_set_id: str = Field(..., description="Shared Set ID")
+    shared_set_name: str = Field(..., description="Shared Set Name")
+    shared_set_resource_name: str = Field(..., description="Resource name of the shared set")
+    action_taken: Literal["CREATED_AND_SYNCED", "SYNCED_EXISTING", "ATTACHED_ONLY", "NO_CHANGE"] = Field(..., description="Action summary")
+    added_keywords_count: int = Field(default=0, description="Number of new keywords added to the list")
+    total_keywords_count: int = Field(default=0, description="Total unique keywords in the list after sync")
+    attached_campaign_ids: List[str] = Field(default_factory=list, description="Campaign IDs newly attached to this list")
+    already_attached_campaign_ids: List[str] = Field(default_factory=list, description="Campaign IDs that were already attached to this list")
+    notes: List[str] = Field(default_factory=list, description="Audit notes and diagnostic details")

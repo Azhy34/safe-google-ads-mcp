@@ -125,11 +125,14 @@ GADS_REFRESH_TOKEN_REGEX = r'(?i)(refresh_token[\'"\s:=]+)([A-Za-z0-9_\-\./]{30,
 GADS_CLIENT_SECRET_REGEX = r'(?i)(client_secret[\'"\s:=]+)([A-Za-z0-9_\-]{20,50})'
 GADS_DEV_TOKEN_REGEX = r'(?i)(developer_token[\'"\s:=]+)([A-Za-z0-9_\-]{15,40})'
 CONNECTION_PWD_REGEX = r'(://[^:]+:)([^@]+)(@)'
+EMAIL_REGEX = r'(?i)\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+E164_PHONE_REGEX = r'(?<!\d)\+\d{8,15}\b'
+PII_KEYS = frozenset({"email", "phone", "phone_number", "customer_email", "customer_phone"})
 
 def redact_secrets(data: Any) -> Any:
     """
     Zero-Trust DLP Guard:
-    Recursively scans strings, dicts, or lists and redacts sensitive credentials.
+    Recursively scans strings, dicts, or lists and redacts sensitive credentials and customer PII.
     """
     if isinstance(data, str):
         text = re.sub(GADS_BEARER_REGEX, '[REDACTED_GADS_BEARER]', data)
@@ -138,9 +141,17 @@ def redact_secrets(data: Any) -> Any:
         text = re.sub(GADS_CLIENT_SECRET_REGEX, r'\1[REDACTED_CLIENT_SECRET]', text)
         text = re.sub(GADS_DEV_TOKEN_REGEX, r'\1[REDACTED_DEV_TOKEN]', text)
         text = re.sub(CONNECTION_PWD_REGEX, r'\1[REDACTED_PASSWORD]\3', text)
+        text = re.sub(EMAIL_REGEX, '[REDACTED_EMAIL]', text)
+        text = re.sub(E164_PHONE_REGEX, '[REDACTED_PHONE]', text)
         return text
     elif isinstance(data, dict):
-        return {k: redact_secrets(v) for k, v in data.items()}
+        redacted = {}
+        for k, v in data.items():
+            if str(k).lower() in PII_KEYS and isinstance(v, str):
+                redacted[k] = "[REDACTED_PII]"
+            else:
+                redacted[k] = redact_secrets(v)
+        return redacted
     elif isinstance(data, list):
         return [redact_secrets(elem) for elem in data]
     return data

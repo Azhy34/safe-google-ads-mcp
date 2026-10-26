@@ -83,7 +83,7 @@ MAX_ENABLED_RSA_PER_AD_GROUP = 3
 @handle_google_ads_errors
 def deploy_golden_rsa(req: DeployGoldenRSARequest, customer_id: str = CUSTOMER_ID) -> str:
     """
-    Deploys a Golden 15/4 RSA with Headline 1 DKI pinning and WELCOME3 compliance.
+    Deploys a Golden 15/4 RSA with Headline 1 DKI pinning and PROMO10 compliance.
     If the ad group already has 3 enabled RSAs, pauses only the oldest ones needed to stay at 3.
     Pauses and the create go in one atomic request: if the new ad is rejected, nothing is paused.
     """
@@ -145,4 +145,4 @@ def deploy_golden_rsa(req: DeployGoldenRSARequest, customer_id: str = CUSTOMER_I
     response = aga_service.mutate_ad_group_ads(customer_id=customer_id, operations=operations)
     new_ad_resource = response.results[-1].resource_name
     paused_note = f" Paused oldest ad(s): {', '.join(paused)}." if paused else ""
-    return f"Successfully deployed Golden RSA {new_ad_resource} to AdGroup {req.ad_group_id} (15/4 Matrix + DKI + WELCOME3).{paused_note}"
+    return f"Successfully deployed Golden RSA {new_ad_resource} to AdGroup {req.ad_group_id} (15/4 Matrix + DKI + PROMO10).{paused_note}"

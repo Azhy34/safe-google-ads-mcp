@@ -9,9 +9,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.client import get_ads_client
 from core.config import CUSTOMER_ID
 from shield.error_shield import ServiceResult, handle_google_ads_errors
-from shield.models_criterion import SearchTermWasteRecord, ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest
+from shield.models_criterion import (
+    SearchTermWasteRecord, ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest,
+    SyncSharedNegativeListRequest, SharedNegativeListResponse
+)
 
-# Target Account Verified Negative Shields
+# E-Commerce Verified Negative Shields
 NEGATIVE_SHIELDS = {
     "de": [
         "obi", "bauhaus", "hornbach", "toom", "hagebau", "tedox", "ikea", "roller",
@@ -224,7 +227,7 @@ def audit_campaign_4level_shield(campaign_id: str, customer_id: str = CUSTOMER_I
     Level 1: Campaign settings & Budget
     Level 1 also checks primary_status and the Maximize Clicks CPC ceiling.
     Level 2: Ad Groups (bids are checked only for MANUAL_CPC campaigns)
-    Level 3: RSA copy (15/4 matrix, WELCOME3 promo, Ad Strength notes)
+    Level 3: RSA copy (15/4 matrix, PROMO10 promo, Ad Strength notes)
     Level 4: Negative Keyword Shield strength
     Returns an objective 0-100% Quality Score.
     """
@@ -306,9 +309,9 @@ def audit_campaign_4level_shield(campaign_id: str, customer_id: str = CUSTOMER_I
             if d_count < 4:
                 score -= (4 - d_count) * 5
                 deductions.append(f"Level 3: RSA #{i} descriptions count {d_count}/4 (Missing {4 - d_count} descriptions)")
-            if not any("coupon=WELCOME3" in u for u in urls):
-                score -= 15
-                deductions.append(f"Level 3: RSA #{i} final URL is missing mandatory ?coupon=WELCOME3")
+            if not any(u.startswith("https://") for u in urls):
+                score -= 10
+                deductions.append(f"Level 3: RSA #{i} final URL is missing secure HTTPS protocol")
             strength = row.ad_group_ad.ad_strength.name
             if strength in ("POOR", "AVERAGE"):
                 notes.append(f"Level 3: RSA #{i} in '{row.ad_group.name}' has Ad Strength {strength}")
@@ -537,4 +540,201 @@ def search_keyword_ideas(seeds: List[str], language_id: str = "1001", location_i
         })
     results.sort(key=lambda x: x["monthly_volume"], reverse=True)
     return results[:50]
+
+@handle_google_ads_errors
+def sync_shared_negative_list(
+    req: SyncSharedNegativeListRequest,
+    customer_id: str = CUSTOMER_ID
+) -> SharedNegativeListResponse:
+    """
+    Synchronizes an account-level shared negative keyword list via SharedSetService,
+    SharedCriterionService, and CampaignSharedSetService.
+    Idempotent: deduplicates existing keywords and skips already attached campaigns.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+    shared_set_service = client.get_service("SharedSetService")
+    shared_criterion_service = client.get_service("SharedCriterionService")
+    campaign_shared_set_service = client.get_service("CampaignSharedSetService")
+
+    list_name = req.list_name.strip()
+    match_type_str = (req.match_type or "BROAD").upper().strip()
+
+    # 1. Search for existing shared_set of type NEGATIVE_KEYWORDS
+    query_set = """
+        SELECT
+            shared_set.id,
+            shared_set.name,
+            shared_set.type,
+            shared_set.status,
+            shared_set.member_count
+        FROM shared_set
+        WHERE shared_set.type = 'NEGATIVE_KEYWORDS'
+          AND shared_set.status != 'REMOVED'
+    """
+    resp_sets = ga_service.search(customer_id=customer_id, query=query_set)
+    existing_set = None
+    for row in resp_sets:
+        if row.shared_set.name.strip().lower() == list_name.lower():
+            existing_set = row.shared_set
+            break
+
+    is_new = False
+    if existing_set is None:
+        op = client.get_type("SharedSetOperation")
+        shared_set = client.get_type("SharedSet")
+        shared_set.name = list_name
+        shared_set.type_ = client.enums.SharedSetTypeEnum.NEGATIVE_KEYWORDS
+        op.create = shared_set
+
+        create_resp = shared_set_service.mutate_shared_sets(
+            customer_id=customer_id,
+            operations=[op]
+        )
+        shared_set_resource = create_resp.results[0].resource_name
+        shared_set_id = shared_set_resource.split("/")[-1]
+        shared_set_name = list_name
+        is_new = True
+        existing_keywords = set()
+    else:
+        shared_set_id = str(existing_set.id)
+        shared_set_name = existing_set.name
+        shared_set_resource = f"customers/{customer_id}/sharedSets/{shared_set_id}"
+
+        # 2. Query existing keywords in this shared set to prevent duplicate errors
+        query_crit = f"""
+            SELECT
+                shared_criterion.criterion_id,
+                shared_criterion.keyword.text,
+                shared_criterion.keyword.match_type
+            FROM shared_criterion
+            WHERE shared_criterion.shared_set = '{shared_set_resource}'
+        """
+        existing_keywords = set()
+        resp_crit = ga_service.search(customer_id=customer_id, query=query_crit)
+        for row in resp_crit:
+            kw = getattr(row.shared_criterion, "keyword", None)
+            if kw and getattr(kw, "text", None):
+                kw_t = kw.text.strip().lower()
+                mt = getattr(kw, "match_type", None)
+                mt_str = mt.name if hasattr(mt, "name") else str(mt or "BROAD").upper()
+                existing_keywords.add((kw_t, mt_str))
+
+    # 3. Add new keywords
+    added_count = 0
+    kws_to_add = []
+    if req.keywords:
+        for raw_kw in req.keywords:
+            kw_text = raw_kw.strip()
+            if not kw_text:
+                continue
+            pair = (kw_text.lower(), match_type_str)
+            if pair in existing_keywords:
+                continue
+            kws_to_add.append(kw_text)
+            existing_keywords.add(pair)
+
+    if kws_to_add:
+        # Resolve MatchType Enum directly without nested wrappers
+        match_enum = getattr(client.enums.KeywordMatchTypeEnum, match_type_str, client.enums.KeywordMatchTypeEnum.BROAD)
+        crit_ops = []
+        for kw_text in kws_to_add:
+            op = client.get_type("SharedCriterionOperation")
+            crit = client.get_type("SharedCriterion")
+            crit.shared_set = shared_set_resource
+            crit.keyword.text = kw_text
+            crit.keyword.match_type = match_enum
+            op.create = crit
+            crit_ops.append(op)
+
+        shared_criterion_service.mutate_shared_criteria(
+            customer_id=customer_id,
+            operations=crit_ops
+        )
+        added_count = len(kws_to_add)
+
+    # 4. Attach to campaigns if requested
+    newly_attached = []
+    already_attached = []
+    if req.campaign_ids:
+        query_css = f"""
+            SELECT
+                campaign_shared_set.campaign,
+                campaign_shared_set.shared_set,
+                campaign_shared_set.status
+            FROM campaign_shared_set
+            WHERE campaign_shared_set.shared_set = '{shared_set_resource}'
+              AND campaign_shared_set.status != 'REMOVED'
+        """
+        currently_attached_cids = set()
+        resp_css = ga_service.search(customer_id=customer_id, query=query_css)
+        for row in resp_css:
+            c_res = row.campaign_shared_set.campaign
+            cid = c_res.split("/")[-1]
+            currently_attached_cids.add(cid)
+
+        css_ops = []
+        for raw_cid in req.campaign_ids:
+            cid = str(raw_cid).strip()
+            if not cid:
+                continue
+            if cid in currently_attached_cids:
+                already_attached.append(cid)
+                continue
+
+            op = client.get_type("CampaignSharedSetOperation")
+            css = client.get_type("CampaignSharedSet")
+            css.campaign = f"customers/{customer_id}/campaigns/{cid}"
+            css.shared_set = shared_set_resource
+            op.create = css
+            css_ops.append(op)
+            newly_attached.append(cid)
+
+        if css_ops:
+            campaign_shared_set_service.mutate_campaign_shared_sets(
+                customer_id=customer_id,
+                operations=css_ops
+            )
+
+    # 5. Build audit notes and response
+    notes = []
+    if is_new:
+        notes.append(f"✅ Создан новый общий список минус-слов '{shared_set_name}' (ID: {shared_set_id}).")
+    else:
+        notes.append(f"ℹ️ Использован существующий общий список минус-слов '{shared_set_name}' (ID: {shared_set_id}).")
+
+    if added_count > 0:
+        notes.append(f"✅ Добавлено {added_count} новых минус-слов ({match_type_str}).")
+    elif req.keywords:
+        notes.append("ℹ️ Все переданные минус-слова уже присутствуют в списке (дубликаты пропущены).")
+
+    if newly_attached:
+        notes.append(f"✅ Список привязан к {len(newly_attached)} кампаниям: {', '.join(newly_attached)}.")
+    if already_attached:
+        notes.append(f"ℹ️ Список уже был привязан к кампаниям: {', '.join(already_attached)}.")
+
+    if is_new and (added_count > 0 or newly_attached):
+        action = "CREATED_AND_SYNCED"
+    elif is_new:
+        action = "CREATED_AND_SYNCED"
+    elif added_count > 0:
+        action = "SYNCED_EXISTING"
+    elif newly_attached:
+        action = "ATTACHED_ONLY"
+    else:
+        action = "NO_CHANGE"
+
+    return SharedNegativeListResponse(
+        customer_id=customer_id,
+        shared_set_id=shared_set_id,
+        shared_set_name=shared_set_name,
+        shared_set_resource_name=shared_set_resource,
+        action_taken=action,
+        added_keywords_count=added_count,
+        total_keywords_count=len(existing_keywords),
+        attached_campaign_ids=newly_attached,
+        already_attached_campaign_ids=already_attached,
+        notes=notes
+    )
+
 

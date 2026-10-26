@@ -8,7 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.client import get_ads_client, eur_to_micros
 from core.config import CUSTOMER_ID
 from shield.error_shield import ServiceResult, handle_google_ads_errors
-from shield.models_adgroup import GoogleAdGroupRecord, AdGroupBidUpdateRequest, AdGroupKeywordRecord, KeywordStatusUpdateRequest
+from shield.models_adgroup import (
+    GoogleAdGroupRecord, AdGroupBidUpdateRequest, AdGroupKeywordRecord, KeywordStatusUpdateRequest,
+    CreateAdGroupRequest, CreateAdGroupResponse, AddKeywordsRequest, AddKeywordsResponse
+)
 
 @handle_google_ads_errors
 def list_ad_groups(campaign_id: str = None, customer_id: str = CUSTOMER_ID) -> List[GoogleAdGroupRecord]:
@@ -174,3 +177,103 @@ def update_keyword_status(req: KeywordStatusUpdateRequest, customer_id: str = CU
 
     agc_service.mutate_ad_group_criteria(customer_id=customer_id, operations=[operation])
     return f"Keyword {label}: {old_status} -> {new_status}."
+
+@handle_google_ads_errors
+def create_ad_group(req: CreateAdGroupRequest, customer_id: str = CUSTOMER_ID) -> CreateAdGroupResponse:
+    """
+    Creates a new Ad Group in the specified campaign and optionally adds positive exact/phrase keywords.
+    """
+    client = get_ads_client()
+    campaign_service = client.get_service("CampaignService")
+    campaign_resource_name = campaign_service.campaign_path(customer_id, req.campaign_id)
+    
+    ag_service = client.get_service("AdGroupService")
+    ag_op = client.get_type("AdGroupOperation")
+    ag = ag_op.create
+    ag.name = req.name
+    ag.campaign = campaign_resource_name
+    ag.status = client.enums.AdGroupStatusEnum.ENABLED if req.status == "ENABLED" else client.enums.AdGroupStatusEnum.PAUSED
+    ag.type_ = client.enums.AdGroupTypeEnum.SEARCH_STANDARD
+    
+    ag_res = ag_service.mutate_ad_groups(customer_id=customer_id, operations=[ag_op])
+    ad_group_resource_name = ag_res.results[0].resource_name
+    ad_group_id = ad_group_resource_name.split("/")[-1]
+    
+    kw_count = 0
+    if req.keywords:
+        agc_service = client.get_service("AdGroupCriterionService")
+        agc_ops = []
+        for kw in req.keywords:
+            kw_clean = kw.strip()
+            if not kw_clean:
+                continue
+            op = client.get_type("AdGroupCriterionOperation")
+            agc = op.create
+            agc.ad_group = ad_group_resource_name
+            agc.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+            
+            if kw_clean.startswith("[") and kw_clean.endswith("]"):
+                agc.keyword.text = kw_clean[1:-1].strip()
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.EXACT
+            elif kw_clean.startswith('"') and kw_clean.endswith('"'):
+                agc.keyword.text = kw_clean[1:-1].strip()
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+            else:
+                agc.keyword.text = kw_clean
+                agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+            agc_ops.append(op)
+            
+        if agc_ops:
+            agc_service.mutate_ad_group_criteria(customer_id=customer_id, operations=agc_ops)
+            kw_count = len(agc_ops)
+            
+    return CreateAdGroupResponse(
+        ad_group_id=ad_group_id,
+        ad_group_resource_name=ad_group_resource_name,
+        campaign_id=req.campaign_id,
+        name=req.name,
+        keywords_count=kw_count
+    )
+
+@handle_google_ads_errors
+def add_ad_group_keywords(req: AddKeywordsRequest, customer_id: str = CUSTOMER_ID) -> AddKeywordsResponse:
+    """
+    Adds positive keywords (Exact [kw] or Phrase "kw") to an existing Ad Group.
+    """
+    client = get_ads_client()
+    ad_group_service = client.get_service("AdGroupService")
+    ad_group_resource_name = ad_group_service.ad_group_path(customer_id, req.ad_group_id)
+    
+    agc_service = client.get_service("AdGroupCriterionService")
+    agc_ops = []
+    added = []
+    for kw in req.keywords:
+        kw_clean = kw.strip()
+        if not kw_clean:
+            continue
+        op = client.get_type("AdGroupCriterionOperation")
+        agc = op.create
+        agc.ad_group = ad_group_resource_name
+        agc.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+        
+        if kw_clean.startswith("[") and kw_clean.endswith("]"):
+            agc.keyword.text = kw_clean[1:-1].strip()
+            agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.EXACT
+        elif kw_clean.startswith('"') and kw_clean.endswith('"'):
+            agc.keyword.text = kw_clean[1:-1].strip()
+            agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+        else:
+            agc.keyword.text = kw_clean
+            agc.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+        agc_ops.append(op)
+        added.append(kw_clean)
+        
+    if agc_ops:
+        agc_service.mutate_ad_group_criteria(customer_id=customer_id, operations=agc_ops)
+        
+    return AddKeywordsResponse(
+        ad_group_id=req.ad_group_id,
+        added_count=len(added),
+        keywords=added
+    )
+

@@ -5,7 +5,7 @@ class GoogleAdGroupRecord(BaseModel):
     id: str = Field(..., description="Ad Group ID")
     resource_name: Optional[str] = Field(None, description="Resource name")
     campaign_id: str = Field(..., description="Parent Campaign ID")
-    name: str = Field(..., description="Ad Group Name (e.g. Space - Sonnensystem, Berge, Jungle)")
+    name: str = Field(..., description="Ad Group Name (e.g. Core Products, Category A, Category B)")
     status: Literal["ENABLED", "PAUSED", "REMOVED"] = Field(..., description="Serving status")
     type: str = Field(default="SEARCH_STANDARD", description="Ad Group Type")
     cpc_bid_micros: int = Field(default=0, description="Base CPC bid in micros (e.g. 600000 = 0.60 EUR)")
@@ -39,3 +39,26 @@ class AdGroupKeywordRecord(BaseModel):
     search_predicted_ctr: Optional[str] = Field(None, description="BELOW_AVERAGE, AVERAGE, ABOVE_AVERAGE")
     creative_quality_score: Optional[str] = Field(None, description="Ad Relevance evaluation")
     post_click_quality_score: Optional[str] = Field(None, description="Landing Page Experience evaluation")
+
+class CreateAdGroupRequest(BaseModel):
+    campaign_id: str = Field(..., pattern=r"^\d+$", description="Parent Campaign ID")
+    name: str = Field(..., min_length=1, max_length=150, description="Ad Group Name")
+    status: Literal["ENABLED", "PAUSED"] = Field(default="ENABLED", description="Initial Ad Group status")
+    keywords: list[str] = Field(default_factory=list, description="Initial list of positive keywords (Exact [kw] or Phrase \"kw\")")
+
+class CreateAdGroupResponse(BaseModel):
+    ad_group_id: str = Field(..., description="Created Ad Group ID")
+    ad_group_resource_name: str = Field(..., description="Ad Group Resource Name")
+    campaign_id: str = Field(..., description="Parent Campaign ID")
+    name: str = Field(..., description="Ad Group Name")
+    keywords_count: int = Field(default=0, description="Number of initial keywords added")
+
+class AddKeywordsRequest(BaseModel):
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Target Ad Group ID")
+    keywords: list[str] = Field(..., min_length=1, description="List of positive keywords (Exact [kw] or Phrase \"kw\")")
+
+class AddKeywordsResponse(BaseModel):
+    ad_group_id: str = Field(..., description="Target Ad Group ID")
+    added_count: int = Field(..., description="Number of keywords added")
+    keywords: list[str] = Field(..., description="List of added keywords")
+

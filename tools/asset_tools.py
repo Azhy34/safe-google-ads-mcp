@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -8,13 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client
 from core.config import CUSTOMER_ID
-from shield.error_shield import ServiceResult, handle_google_ads_errors
+from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
 from shield.models_asset import (
-    GoogleAssetRecord, ImageAssetData, SitelinkAssetData, 
+    GoogleAssetRecord, ImageAssetData, SitelinkAssetData,
     StructuredSnippetAssetData, CalloutAssetData, PromotionAssetData, PriceAssetData,
     AssetAssociationRecord, AssetPerformanceRecord, CampaignAssetDiversity,
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest,
-    SyncPriceExtensionRequest
+    SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
+    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
 )
 
 @handle_google_ads_errors
@@ -515,7 +517,7 @@ def get_assets_diversity(customer_id: str = CUSTOMER_ID) -> List[CampaignAssetDi
         if has_promo:
             score += 10
         else:
-            missing.append("Missing Promotion (WELCOME3)")
+            missing.append("Missing Promotion (PROMO10)")
             
         if has_cust_price:
             score += 5
@@ -708,7 +710,7 @@ def sync_price_extension(req: SyncPriceExtensionRequest, customer_id: str = CUST
 
     elif req.level == "CAMPAIGN":
         q = f"""
-        SELECT campaign_asset.asset, campaign_asset.resource_name
+        SELECT campaign.id, campaign_asset.asset, campaign_asset.resource_name
         FROM campaign_asset
         WHERE campaign.id = '{req.entity_id}' AND campaign_asset.field_type = 'PRICE' AND campaign_asset.status != 'REMOVED'
         """
@@ -734,7 +736,7 @@ def sync_price_extension(req: SyncPriceExtensionRequest, customer_id: str = CUST
 
     else:  # AD_GROUP
         q = f"""
-        SELECT ad_group_asset.asset, ad_group_asset.resource_name
+        SELECT ad_group.id, ad_group_asset.asset, ad_group_asset.resource_name
         FROM ad_group_asset
         WHERE ad_group.id = '{req.entity_id}' AND ad_group_asset.field_type = 'PRICE' AND ad_group_asset.status != 'REMOVED'
         """
@@ -763,6 +765,307 @@ def sync_price_extension(req: SyncPriceExtensionRequest, customer_id: str = CUST
         f"Created Asset {new_asset_id} ('{req.name}', {len(req.offerings)} offerings). "
         f"Unlinked {len(unlinked_ids)} old asset(s): {unlinked_ids if unlinked_ids else 'none'}. "
         f"New asset {new_asset_id} is now ACTIVE."
+    )
+
+
+# --- SITELINKS OF THE SITE: PREVIEW (read) AND CREATE + LINK (write) ---
+
+SITELINKS_WANTED = 4  # the site-ads skill: at least 4 sitelinks on the campaign
+
+def _sitelink_key(link_text: str, description1: str, description2: str, final_url: str):
+    """What makes two sitelink assets the same: the three texts and the address, compared without case and trailing slash."""
+    return (link_text.strip().casefold(), description1.strip().casefold(),
+            description2.strip().casefold(), final_url.strip().rstrip("/").casefold())
+
+def _plan_sitelinks(client, customer_id: str, req: CreateSitelinkAssetsRequest):
+    """
+    Reads the account and says what create_sitelink_assets would do, changing nothing. Per sitelink one action:
+    `create` (new asset + link), `link_existing` (an identical asset exists, only the link is missing) or
+    `already_linked`. Returns (plan, None), or (None, ServiceResult) when the campaign does not exist.
+    """
+    ga_service = client.get_service("GoogleAdsService")
+    campaign_rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign.name, campaign.status
+        FROM campaign
+        WHERE campaign.id = '{req.campaign_id}' AND campaign.status != 'REMOVED'
+    """))
+    if not campaign_rows:
+        return None, ServiceResult(
+            success=False,
+            error=ApiError(code="CAMPAIGN_NOT_FOUND", message=f"Campaign {req.campaign_id} does not exist in this account.",
+                           trigger=req.campaign_id, field_path=["campaign_id"]),
+            telemetry=Telemetry(latency_ms=0.0))
+    campaign = campaign_rows[0].campaign
+
+    existing = {}  # key of the four texts -> asset id; an identical asset is reused, never duplicated
+    for row in ga_service.search(customer_id=customer_id, query="""
+        SELECT asset.id, asset.final_urls, asset.sitelink_asset.link_text,
+               asset.sitelink_asset.description1, asset.sitelink_asset.description2
+        FROM asset
+        WHERE asset.type = 'SITELINK'
+    """):
+        urls = list(row.asset.final_urls)
+        if urls:
+            sl = row.asset.sitelink_asset
+            existing.setdefault(_sitelink_key(sl.link_text, sl.description1, sl.description2, urls[0]), str(row.asset.id))
+
+    linked_ids = {row.campaign_asset.asset.split("/")[-1] for row in ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign_asset.asset
+        FROM campaign_asset
+        WHERE campaign.id = '{req.campaign_id}' AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED'
+    """)}
+
+    items, to_link = [], 0
+    for s in req.sitelinks:
+        asset_id = existing.get(_sitelink_key(s.link_text, s.description1, s.description2, s.final_url))
+        action = "already_linked" if asset_id in linked_ids and asset_id else "link_existing" if asset_id else "create"
+        to_link += action != "already_linked"
+        items.append({"link_text": s.link_text, "final_url": s.final_url, "action": action, "asset_id": asset_id})
+    after = len(linked_ids) + to_link
+    return {
+        "campaign_id": req.campaign_id,
+        "campaign_name": campaign.name,
+        "campaign_status": getattr(campaign.status, "name", str(campaign.status)),
+        "sitelinks_on_campaign_now": len(linked_ids),
+        "sitelinks_on_campaign_after": after,
+        "warnings": [] if after >= SITELINKS_WANTED else [f"The campaign would have {after} sitelinks; the site rules want at least {SITELINKS_WANTED}."],
+        "items": items,
+    }, None
+
+@handle_google_ads_errors
+def preview_sitelink_assets(req: CreateSitelinkAssetsRequest, customer_id: str = CUSTOMER_ID):
+    """Read-only: what create_sitelink_assets would create and link for this campaign. Nothing is changed."""
+    plan, failure = _plan_sitelinks(get_ads_client(), customer_id, req)
+    if failure:
+        return failure
+    plan["changes_nothing"] = True
+    return json.dumps(plan, ensure_ascii=False, indent=2)
+
+@handle_google_ads_errors
+def create_sitelink_assets(req: CreateSitelinkAssetsRequest, customer_id: str = CUSTOMER_ID):
+    """
+    Creates the sitelink assets that do not exist yet (one atomic request) and links every sitelink that is not linked
+    yet to the campaign (a second atomic request). Identical existing assets are reused and linked sitelinks are skipped,
+    so a repeat after a failure between the two requests finishes the job instead of making duplicates.
+    """
+    client = get_ads_client()
+    plan, failure = _plan_sitelinks(client, customer_id, req)
+    if failure:
+        return failure
+    asset_service = client.get_service("AssetService")
+    by_text = {s.link_text: s for s in req.sitelinks}
+
+    to_create = [item for item in plan["items"] if item["action"] == "create"]
+    if to_create:
+        operations = []
+        for item in to_create:
+            s = by_text[item["link_text"]]
+            op = client.get_type("AssetOperation")
+            asset = op.create
+            asset.sitelink_asset.link_text = s.link_text
+            asset.sitelink_asset.description1 = s.description1
+            asset.sitelink_asset.description2 = s.description2
+            asset.final_urls.append(s.final_url)
+            operations.append(op)
+        response = asset_service.mutate_assets(customer_id=customer_id, operations=operations)
+        for item, result in zip(to_create, response.results):
+            item["asset_id"] = result.resource_name.split("/")[-1]
+
+    to_link = [item for item in plan["items"] if item["action"] != "already_linked"]
+    if to_link:
+        campaign_path = client.get_service("CampaignService").campaign_path(customer_id, req.campaign_id)
+        operations = []
+        for item in to_link:
+            op = client.get_type("CampaignAssetOperation")
+            link = op.create
+            link.campaign = campaign_path
+            link.asset = asset_service.asset_path(customer_id, item["asset_id"])
+            link.field_type = client.enums.AssetFieldTypeEnum.SITELINK
+            operations.append(op)
+        client.get_service("CampaignAssetService").mutate_campaign_assets(customer_id=customer_id, operations=operations)
+
+    created = [i["asset_id"] for i in to_create]
+    reused = [i["asset_id"] for i in plan["items"] if i["action"] == "link_existing"]
+    skipped = [i["asset_id"] for i in plan["items"] if i["action"] == "already_linked"]
+    return (
+        f"Sitelinks on Campaign {req.campaign_id} ('{plan['campaign_name']}'): created {len(created)} new asset(s) {created or ''}, "
+        f"linked {len(to_link)} (reused existing {reused or 'none'}), already linked {len(skipped)} {skipped or ''}. "
+        f"The campaign now has {plan['sitelinks_on_campaign_after']} sitelinks."
+    )
+
+
+def _require_campaign(ga_service, customer_id: str, campaign_id: str):
+    """The live campaign row, or a typed failure when the id is not in this account."""
+    rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign.name, campaign.status
+        FROM campaign
+        WHERE campaign.id = '{campaign_id}' AND campaign.status != 'REMOVED'
+    """))
+    if not rows:
+        return None, ServiceResult(
+            success=False,
+            error=ApiError(code="CAMPAIGN_NOT_FOUND", message=f"Campaign {campaign_id} does not exist in this account.",
+                           trigger=campaign_id, field_path=["campaign_id"]),
+            telemetry=Telemetry(latency_ms=0.0))
+    return rows[0].campaign, None
+
+
+def _link_assets(client, customer_id: str, campaign_id: str, asset_ids, field_type):
+    """One CampaignAssetService request that links every given asset to the campaign."""
+    asset_service = client.get_service("AssetService")
+    campaign_path = client.get_service("CampaignService").campaign_path(customer_id, campaign_id)
+    operations = []
+    for asset_id in asset_ids:
+        op = client.get_type("CampaignAssetOperation")
+        link = op.create
+        link.campaign = campaign_path
+        link.asset = asset_service.asset_path(customer_id, asset_id)
+        link.field_type = field_type
+        operations.append(op)
+    client.get_service("CampaignAssetService").mutate_campaign_assets(customer_id=customer_id, operations=operations)
+
+
+@handle_google_ads_errors
+def create_callout_assets(req: CreateCalloutAssetsRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Creates the callout assets that do not exist yet (one request) and links every callout that is not linked yet
+    to the campaign (a second request). An existing callout with the same text is reused. A repeat writes nothing.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+    campaign, failure = _require_campaign(ga_service, customer_id, req.campaign_id)
+    if failure:
+        return failure
+
+    existing = {}
+    for row in ga_service.search(customer_id=customer_id, query="""
+        SELECT asset.id, asset.callout_asset.callout_text
+        FROM asset
+        WHERE asset.type = 'CALLOUT'
+    """):
+        text = getattr(getattr(row.asset, "callout_asset", None), "callout_text", None)
+        if text:
+            existing.setdefault(text.strip().casefold(), str(row.asset.id))
+
+    linked_ids = {row.campaign_asset.asset.split("/")[-1] for row in ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign_asset.asset
+        FROM campaign_asset
+        WHERE campaign.id = '{req.campaign_id}'
+          AND campaign_asset.field_type = 'CALLOUT' AND campaign_asset.status != 'REMOVED'
+    """)}
+
+    to_create, to_link, reused, skipped = [], [], [], []
+    for text in req.callouts:
+        asset_id = existing.get(text.casefold())
+        if asset_id and asset_id in linked_ids:
+            skipped.append(asset_id)
+        elif asset_id:
+            reused.append(asset_id)
+            to_link.append(asset_id)
+        else:
+            to_create.append(text)
+
+    created = []
+    if to_create:
+        asset_service = client.get_service("AssetService")
+        operations = []
+        for text in to_create:
+            op = client.get_type("AssetOperation")
+            op.create.callout_asset.callout_text = text
+            operations.append(op)
+        response = asset_service.mutate_assets(customer_id=customer_id, operations=operations)
+        for text, result in zip(to_create, response.results):
+            asset_id = result.resource_name.split("/")[-1]
+            created.append(asset_id)
+            existing[text.casefold()] = asset_id
+            to_link.append(asset_id)
+
+    if to_link:
+        _link_assets(client, customer_id, req.campaign_id, to_link, client.enums.AssetFieldTypeEnum.CALLOUT)
+
+    return (
+        f"Callouts on Campaign {req.campaign_id} ('{campaign.name}'): created {len(created)} new asset(s) {created or ''}, "
+        f"linked {len(to_link)} (reused existing {reused or 'none'}), already linked {len(skipped)} {skipped or ''}. "
+        f"The campaign now has {len(linked_ids) + len(to_link)} callouts."
+    )
+
+
+def _snippet_values(raw) -> frozenset:
+    return frozenset(str(value).strip().casefold() for value in list(raw or []) if str(value).strip())
+
+
+@handle_google_ads_errors
+def create_structured_snippet_asset(req: CreateStructuredSnippetAssetRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Creates one structured snippet when no asset has the same header and the same set of values, then links it to the
+    campaign. An identical asset is reused. The same header already linked with different values is refused: Google
+    serves one snippet per header, and a second link would be a different asset, not an edit of the first.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+    campaign, failure = _require_campaign(ga_service, customer_id, req.campaign_id)
+    if failure:
+        return failure
+
+    wanted = _snippet_values(req.values)
+    reuse_id = None
+    for row in ga_service.search(customer_id=customer_id, query="""
+        SELECT asset.id, asset.structured_snippet_asset.header, asset.structured_snippet_asset.values
+        FROM asset
+        WHERE asset.type = 'STRUCTURED_SNIPPET'
+    """):
+        snippet = getattr(row.asset, "structured_snippet_asset", None)
+        if snippet and getattr(snippet, "header", None) == req.header and _snippet_values(snippet.values) == wanted:
+            reuse_id = str(row.asset.id)
+            break
+
+    linked = []
+    for row in ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign_asset.asset, asset.structured_snippet_asset.header, asset.structured_snippet_asset.values
+        FROM campaign_asset
+        WHERE campaign.id = '{req.campaign_id}'
+          AND campaign_asset.field_type = 'STRUCTURED_SNIPPET' AND campaign_asset.status != 'REMOVED'
+    """):
+        snippet = getattr(row.asset, "structured_snippet_asset", None)
+        linked.append((
+            row.campaign_asset.asset.split("/")[-1],
+            getattr(snippet, "header", None),
+            _snippet_values(getattr(snippet, "values", None)),
+        ))
+
+    same_header = [item for item in linked if item[1] == req.header]
+    if same_header:
+        asset_id, _header, values = same_header[0]
+        if values == wanted:
+            return (
+                f"Structured snippet on Campaign {req.campaign_id} ('{campaign.name}'): header '{req.header}' already linked "
+                f"[{asset_id}]. Nothing was created."
+            )
+        return ServiceResult(
+            success=False,
+            error=ApiError(
+                code="HEADER_ALREADY_ON_CAMPAIGN",
+                message=(f"Campaign {req.campaign_id} already has a structured snippet with header '{req.header}' "
+                         f"and different values (asset {asset_id}). Unlink it before attaching another."),
+                trigger=req.header, field_path=["header"]),
+            telemetry=Telemetry(latency_ms=0.0))
+
+    created = []
+    asset_id = reuse_id
+    if not asset_id:
+        op = client.get_type("AssetOperation")
+        snippet = op.create.structured_snippet_asset
+        snippet.header = req.header
+        snippet.values.extend(req.values)
+        response = client.get_service("AssetService").mutate_assets(customer_id=customer_id, operations=[op])
+        asset_id = response.results[0].resource_name.split("/")[-1]
+        created.append(asset_id)
+
+    _link_assets(client, customer_id, req.campaign_id, [asset_id], client.enums.AssetFieldTypeEnum.STRUCTURED_SNIPPET)
+    reused = [] if created else [asset_id]
+    return (
+        f"Structured snippet on Campaign {req.campaign_id} ('{campaign.name}'): header '{req.header}', "
+        f"created {len(created)} new asset(s) {created or ''}, reused existing {reused or 'none'}, linked [{asset_id}]."
     )
 
 
@@ -826,7 +1129,7 @@ def get_campaign_assets_overview(campaign_id: str, customer_id: str = CUSTOMER_I
         "IMAGE": "Изображения (Square 1:1 & Landscape 1.91:1)",
         "SITELINK": "Дополнительные ссылки (Sitelinks)",
         "CALLOUT": "Уточнения (Callouts - Greenguard, Free Shipping)",
-        "PROMOTION": "Промоакция (Promotion WELCOME3)",
+        "PROMOTION": "Промоакция (Promotion PROMO10)",
         "STRUCTURED_SNIPPET": "Структурированные описания (Snippets)"
     }
     output.append("\n" + "-" * 65)

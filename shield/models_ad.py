@@ -35,16 +35,14 @@ class DeployGoldenRSARequest(BaseModel):
     final_url: str = Field(..., description="Destination landing URL")
     headlines: List[str] = Field(..., min_length=15, max_length=15, description="MUST contain EXACTLY 15 headlines (<=30 chars each); headlines[0] must equal pinned_h1_dki")
     descriptions: List[str] = Field(..., min_length=4, max_length=4, description="MUST contain EXACTLY 4 descriptions (<=90 chars each)")
-    pinned_h1_dki: str = Field(..., description="Headline 1 pinned with Dynamic Keyword Insertion, e.g. {KeyWord:Sonnensystem Tapete}")
+    pinned_h1_dki: str = Field(..., description="Headline 1 pinned with Dynamic Keyword Insertion, e.g. {KeyWord:Premium Running Shoes}")
     path1: Optional[str] = Field(default="Tapete", max_length=15, description="Display URL Path 1 (max 15 chars)")
     path2: Optional[str] = Field(default="Kinder", max_length=15, description="Display URL Path 2 (max 15 chars)")
 
     @field_validator("final_url")
-    def validate_coupon_standard(cls, v):
+    def validate_landing_url(cls, v):
         if not v.startswith(("http://", "https://")):
             raise ValueError("Landing URL must start with http:// or https://")
-        if False:
-            raise ValueError("MANDATORY SAFEGUARD: Landing URL must include ?coupon=WELCOME3 to comply with Standard pricing standards!")
         return v
 
     @field_validator("pinned_h1_dki")

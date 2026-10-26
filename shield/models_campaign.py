@@ -10,7 +10,7 @@ class CampaignBudgetRecord(BaseModel):
 class GoogleCampaignRecord(BaseModel):
     id: str = Field(..., description="Unique Google Ads Campaign ID")
     resource_name: Optional[str] = Field(None, description="Campaign resource name")
-    name: str = Field(..., description="Campaign name (e.g. Search - High Intent)")
+    name: str = Field(..., description="Campaign name (e.g. E-Commerce Search DE+AT - Woodland)")
     status: Literal["ENABLED", "PAUSED", "REMOVED"] = Field(..., description="Campaign serving status")
     advertising_channel_type: str = Field(default="SEARCH", description="Channel type: SEARCH, PERFORMANCE_MAX, DISPLAY")
     bidding_strategy_type: str = Field(default="TARGET_SPEND", description="Strategy: TARGET_SPEND, MANUAL_CPC, MAXIMIZE_CONVERSIONS")
@@ -61,13 +61,13 @@ class IdArguments(BaseModel):
     ad_group_id: Optional[str] = Field(None, pattern=r"^\d{1,20}$", description="Numeric ad group ID, e.g. 201418406040 (get_ad_groups lists them)")
 
 class CreateSearchCampaignRequest(BaseModel):
-    name: str = Field(..., description="Unique campaign name, e.g. Acme Search DE+AT - Core")
+    name: str = Field(..., description="Unique campaign name, e.g. E-Commerce Search DE+AT - Category")
     budget_eur: float = Field(default=3.0, ge=1.0, le=50.0, description="Daily budget in EUR (1.00 - 50.00)")
     cpc_ceiling_eur: float = Field(default=0.55, ge=0.10, le=3.00, description="Maximize Clicks CPC ceiling in EUR (0.10 - 3.00)")
-    status: Literal["PAUSED", "ENABLED"] = Field(default="PAUSED", description="Initial serving status: strictly PAUSED for new campaigns")
+    status: Literal["PAUSED", "ENABLED"] = Field(default="PAUSED", description="Initial serving status: strictly PAUSED for new site campaigns")
     geo_target_constants: list[int] = Field(default_factory=lambda: [2276, 2040], description="Targeted geo IDs: 2276=Germany, 2040=Austria")
     language_constants: list[int] = Field(default_factory=lambda: [1001], description="Targeted language IDs: 1001=German, 1000=English")
-    ad_group_name: str = Field(..., description="Name for the initial ad group, e.g. Core Products - Landing")
+    ad_group_name: str = Field(..., description="Name for the initial ad group")
     keywords: list[str] = Field(default_factory=list, description="Initial keywords in [exact] or \"phrase\" match syntax")
 
 class CreateCampaignResponse(BaseModel):
@@ -78,4 +78,3 @@ class CreateCampaignResponse(BaseModel):
     status: str = Field(..., description="Campaign status (e.g. PAUSED)")
     cpc_ceiling_eur: float = Field(..., description="Configured CPC ceiling in EUR")
     keywords_count: int = Field(..., description="Number of keywords added")
-

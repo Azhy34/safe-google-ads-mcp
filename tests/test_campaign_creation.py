@@ -51,10 +51,10 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
 
     def test_valid_request_with_defaults(self):
         req = CreateSearchCampaignRequest(
-            name="Acme Search DE+AT - Site Woodland",
-            ad_group_name="Fototapete Wald - Landing Category"
+            name="E-Commerce Search DE+AT - Category",
+            ad_group_name="Organic Cotton Hoodie - Landing Category"
         )
-        self.assertEqual(req.name, "Acme Search DE+AT - Site Woodland")
+        self.assertEqual(req.name, "E-Commerce Search DE+AT - Category")
         self.assertEqual(req.budget_eur, 3.0)
         self.assertEqual(req.cpc_ceiling_eur, 0.55)
         self.assertEqual(req.status, "PAUSED")
@@ -64,7 +64,7 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
 
     def test_custom_language_ab_test_request(self):
         req = CreateSearchCampaignRequest(
-            name="Acme Search DE+AT - Site Woodland EN Expat",
+            name="E-Commerce Search DE+AT - Category EN",
             ad_group_name="Woodland Wallpaper - Expats",
             language_constants=[1001, 1000],
             keywords=["[woodland wallpaper]", "\"nursery wallpaper\""]
@@ -136,8 +136,8 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
         mock_client.get_service.side_effect = get_service_side_effect
 
         req = CreateSearchCampaignRequest(
-            name="Acme Search DE+AT - Site Woodland",
-            ad_group_name="Fototapete Wald - Landing Category",
+            name="E-Commerce Search DE+AT - Category",
+            ad_group_name="Organic Cotton Hoodie - Landing Category",
             budget_eur=3.0,
             cpc_ceiling_eur=0.55,
             status="PAUSED",

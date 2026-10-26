@@ -1,5 +1,6 @@
 from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field
+from urllib.parse import urlsplit
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # --- ASSET PAYLOAD DATA ---
 
@@ -24,7 +25,7 @@ class PromotionAssetData(BaseModel):
     promotion_target: str = Field(..., description="Promoted item/category")
     discount_modifier: Optional[str] = Field(None, description="UP_TO, etc.")
     percent_off: Optional[int] = Field(None, description="Discount percentage, e.g. 5 for 5%")
-    promotion_code: Optional[str] = Field(default="WELCOME3", description="Coupon code")
+    promotion_code: Optional[str] = Field(default="PROMO10", description="Coupon code")
 
 class PriceAssetData(BaseModel):
     header: Optional[str] = Field(None, description="Price header or category")
@@ -85,7 +86,7 @@ class CampaignAssetDiversity(BaseModel):
     sitelink_count: int = Field(default=0, description="Number of linked sitelinks (min 4 recommended)")
     has_snippets: bool = Field(default=False, description="Has structured snippets")
     has_callouts: bool = Field(default=False, description="Has callout extensions")
-    has_promotions: bool = Field(default=False, description="Has promotion extension (WELCOME3)")
+    has_promotions: bool = Field(default=False, description="Has promotion extension (PROMO10)")
     has_price: bool = Field(default=False, description="Has price extension")
     has_business_name: bool = Field(default=False, description="Has business name")
     has_business_logo: bool = Field(default=False, description="Has business logo")
@@ -117,13 +118,130 @@ class CreatePriceAssetRequest(BaseModel):
     price_type: Literal["PRODUCT_CATEGORIES", "PRODUCT_TIERS", "SERVICES"] = Field(default="PRODUCT_TIERS", description="Price extension type")
     price_qualifier: Literal["FROM", "UP_TO", "AVERAGE", "UNSPECIFIED"] = Field(default="FROM", description="Price qualifier")
     language_code: str = Field(default="de", description="2-letter language code")
-    offerings: List[PriceOfferingItem] = Field(..., min_items=3, max_items=8, description="List of 3 to 8 price offerings")
+    offerings: List[PriceOfferingItem] = Field(..., min_length=3, max_length=8, description="List of 3 to 8 price offerings")
+
+# --- MUTATIONS: SITELINKS OF THE SITE (example.com) ---
+
+# Generic sitelinks allow any valid HTTPS domain
+ALLOWED_SCHEMES = ("https",)
+# What the site rules (site/AGENTS.md, skill example_store-site-ads) keep out of the site's ads: Marketplace, coupons, health claims.
+SITELINK_FORBIDDEN_TERMS = ("forbidden_term", "promo", "marketplace store", "schadstofffrei", "allergiefrei", "peel and stick")
+CALLOUT_FORBIDDEN_TERMS = SITELINK_FORBIDDEN_TERMS
+# Exact header strings Google accepts. German column of the localized-headers table, plus the English
+# headers this shop's second language uses. "Motive", "Reiseziele" and "Versicherungsschutz" are not in that table.
+APPROVED_SNIPPET_HEADERS = (
+    "Typen", "Modelle", "Stile", "Dienstleistungen", "Marken", "Ausstattung", "Kurse",
+    "Ziele", "Studiengänge", "Viertel", "Versicherungsleistung",
+    "Types", "Models", "Styles", "Brands", "Services",
+)
+SNIPPET_HEADER_HINTS = {
+    "reiseziele": "Ziele",
+    "versicherungsschutz": "Versicherungsleistung",
+    "motive": None,
+}
+
+class SitelinkItem(BaseModel):
+    link_text: str = Field(..., min_length=1, max_length=25, description="Sitelink text, up to 25 characters")
+    description1: str = Field(..., min_length=1, max_length=35, description="Description line 1, up to 35 characters")
+    description2: str = Field(..., min_length=1, max_length=35, description="Description line 2, up to 35 characters")
+    final_url: str = Field(..., description="Clean https address of a example.com page, no query string")
+
+    @field_validator("link_text", "description1", "description2", "final_url", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("final_url")
+    @classmethod
+    def _url_on_the_site(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if parts.scheme != "https" or not parts.netloc:
+            raise ValueError("final_url must be a valid https URL")
+        if parts.query or parts.fragment:
+            raise ValueError("final_url must be clean: no query string and no #anchor (auto-tagging adds tracking params automatically)")
+        return value
+
+    @model_validator(mode="after")
+    def _no_forbidden_words(self):
+        text = " ".join((self.link_text, self.description1, self.description2, self.final_url)).lower()
+        for term in SITELINK_FORBIDDEN_TERMS:
+            if term in text:
+                raise ValueError(f"'{term}' is not allowed in the site's ads (site rules)")
+        return self
+
+class CreateSitelinkAssetsRequest(BaseModel):
+    campaign_id: str = Field(..., pattern=r"^\d+$", description="Campaign the sitelinks are attached to")
+    sitelinks: List[SitelinkItem] = Field(..., min_length=2, max_length=6, description="2 to 6 sitelinks (Google shows two or more; the site rules want at least 4 on the campaign)")
+
+    @model_validator(mode="after")
+    def _unique(self):
+        texts = [s.link_text.casefold() for s in self.sitelinks]
+        urls = [s.final_url.rstrip("/").casefold() for s in self.sitelinks]
+        if len(set(texts)) != len(texts):
+            raise ValueError("link_text must be unique within the request")
+        if len(set(urls)) != len(urls):
+            raise ValueError("final_url must be unique within the request")
+        return self
+
+
+def _clean_ad_texts(values, label: str) -> List[str]:
+    """Strip each text, enforce 1–25 characters, the site's forbidden words, and case-insensitive uniqueness."""
+    cleaned = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"each {label} must be text")
+        text = value.strip()
+        if not text or len(text) > 25:
+            raise ValueError(f"each {label} must be 1 to 25 characters")
+        lowered = text.lower()
+        for term in CALLOUT_FORBIDDEN_TERMS:
+            if term in lowered:
+                raise ValueError(f"'{term}' is not allowed in the site's ads")
+        cleaned.append(text)
+    keys = [text.casefold() for text in cleaned]
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"{label}s must be unique ignoring case")
+    return cleaned
+
+
+class CreateCalloutAssetsRequest(BaseModel):
+    campaign_id: str = Field(..., pattern=r"^\d+$", description="Campaign the callouts are attached to")
+    callouts: List[str] = Field(..., min_length=2, max_length=10, description="2 to 10 callout texts, each 1 to 25 characters")
+
+    @field_validator("callouts")
+    @classmethod
+    def _callouts(cls, values):
+        return _clean_ad_texts(values, "callout")
+
+
+class CreateStructuredSnippetAssetRequest(BaseModel):
+    campaign_id: str = Field(..., pattern=r"^\d+$", description="Campaign the snippet is attached to")
+    header: str = Field(..., description="One header from APPROVED_SNIPPET_HEADERS, the exact Google string")
+    values: List[str] = Field(..., min_length=3, max_length=10, description="3 to 10 snippet values, each 1 to 25 characters")
+
+    @field_validator("header")
+    @classmethod
+    def _header(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("header must be text")
+        header = value.strip()
+        if header in APPROVED_SNIPPET_HEADERS:
+            return header
+        hint = SNIPPET_HEADER_HINTS.get(header.casefold())
+        if hint:
+            raise ValueError(f"'{header}' is not a Google snippet header; use '{hint}'")
+        raise ValueError(f"'{header}' is not a Google snippet header (HEADER_NOT_SUPPORTED). Allowed: {', '.join(APPROVED_SNIPPET_HEADERS)}")
+
+    @field_validator("values")
+    @classmethod
+    def _values(cls, values):
+        return _clean_ad_texts(values, "value")
 
 class SyncPriceExtensionRequest(BaseModel):
     entity_id: str = Field(..., description="Target entity ID: Campaign ID, Ad Group ID, or Customer ID")
     level: Literal["CUSTOMER", "CAMPAIGN", "AD_GROUP"] = Field(default="CAMPAIGN", description="Target level: CAMPAIGN (default), AD_GROUP, or CUSTOMER")
     name: str = Field(..., description="Descriptive name for the new Price Asset, e.g. 'Woodland Preise 2026-10'")
-    offerings: List[PriceOfferingItem] = Field(..., min_items=3, max_items=8, description="List of 3 to 8 price offerings")
+    offerings: List[PriceOfferingItem] = Field(..., min_length=3, max_length=8, description="List of 3 to 8 price offerings")
     price_type: Literal["PRODUCT_CATEGORIES", "PRODUCT_TIERS", "SERVICES"] = Field(default="PRODUCT_TIERS", description="Price extension type")
     price_qualifier: Literal["FROM", "UP_TO", "AVERAGE", "UNSPECIFIED"] = Field(default="FROM", description="Price qualifier")
     language_code: str = Field(default="de", description="2-letter language code")

@@ -347,7 +347,7 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
     campaign.network_settings.target_content_network = False
     campaign.network_settings.target_partner_search_network = False
     
-    # Positive geo target type: PRESENCE (only people physically in targeted locations)
+    # Positive & Negative geo target type: PRESENCE (people physically in targeted locations)
     campaign.geo_target_type_setting.positive_geo_target_type = client.enums.PositiveGeoTargetTypeEnum.PRESENCE
     campaign.geo_target_type_setting.negative_geo_target_type = client.enums.NegativeGeoTargetTypeEnum.PRESENCE
     

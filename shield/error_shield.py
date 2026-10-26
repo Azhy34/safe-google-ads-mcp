@@ -189,12 +189,16 @@ def severity_for(function: str, action_type: str, success: bool, error_code: Opt
     return "WARNING"
 
 MUTATION_FUNCTIONS = {
+    "create_search_campaign", "create_ad_group",
     "update_campaign_status", "update_campaign_budget", "step_campaign_cpc_ceiling",
     "update_ad_group_bid", "deploy_golden_rsa", "link_asset_to_entity",
-    "unlink_asset_from_entity", "create_price_asset", "sync_price_extension",
-    "apply_negative_shield", "add_negative_keywords",
+    "unlink_asset_from_entity", "create_price_asset", "sync_price_extension", "create_sitelink_assets",
+    "create_callout_assets", "create_structured_snippet_asset",
+    "apply_negative_shield", "add_negative_keywords", "sync_shared_negative_list",
     "auto_fix_collisions_and_dupes", "update_keyword_status", "remove_negative_keyword",
+    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords",
 }
+
 
 def _loggable(value: Any) -> Any:
     """Turns call arguments (incl. Pydantic request models) into JSON-safe values for the audit trail."""

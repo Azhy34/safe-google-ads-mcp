@@ -132,7 +132,7 @@ Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
 
 ---
 
-## 🧰 39 Custom FastMCP Tools Catalog
+## 🧰 53 Custom FastMCP Tools Catalog
 
 The tools mirror Google Ads operational hierarchy, split into granular objects and transactional Smart Facades:
 
@@ -140,14 +140,14 @@ The tools mirror Google Ads operational hierarchy, split into granular objects a
 |---|---|---|
 | **🚦 Gate & Health** | `preflight_log_check`, `analyze_tool_health` | Mandatory pre-flight lock; anomaly & error spike audit. |
 | **📢 Campaigns & Bids** | `create_search_campaign`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. |
-| **👥 Groups & Keywords** | `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `auto_fix_collisions_and_dupes` | Quality score audits, cross-campaign collision fixer. |
-| **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, atomic rotation (pauses oldest ad atomically). |
-| **🧩 Google Assets** | `create_price_asset`, `sync_price_extension`, `link_asset_to_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, image assets, sitelinks, and performance labeling. |
-| **🧹 Negative Shields** | `apply_negative_shield`, `mine_search_terms_and_harvest_negatives`, `remove_negative_keyword` | E-commerce waste harvesting and multi-country negative keyword sets. |
-| **📈 Analytics & GA4** | `get_daily_performance`, `get_impression_share_loss`, `search_keyword_ideas` | Keyword Planner discovery and spend vs GA4 dwell-time metrics. |
+| **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, cross-group collision fixer. |
+| **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, Dynamic Keyword Insertion (DKI), atomic rotation (pauses oldest ad atomically). |
+| **🧩 Google Assets** | `create_price_asset`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, Sitelinks, Callouts, Structured Snippets with Google approved headers, and asset performance labeling. |
+| **🧹 Negative Shields** | `apply_negative_shield`, `sync_shared_negative_list`, `mine_search_terms_and_harvest_negatives`, `add_negative_keywords`, `remove_negative_keyword` | E-commerce waste harvesting, multi-country negative keyword sets, and atomic shared negative list sync. |
+| **🎯 Conversions & Tracking** | `check_enhanced_conversions_status`, `set_conversion_action_goal`, `upload_click_conversion` | Enhanced Conversions audit (Customer Data Terms, DMA compliance), Primary/Secondary goal steering for Smart Bidding, and hashed offline conversion upload. |
+| **💳 Billing & Merchant Link** | `get_google_ads_invoices`, `check_merchant_center_link`, `audit_geo_physical_locations`, `get_demand_gen_currency_floor` | Official PDF invoices retrieval, Merchant Center product link audits, physical geo leakage discovery, and currency budget floors. |
+| **📈 Analytics & GA4** | `get_daily_performance`, `get_impression_share_loss`, `search_keyword_ideas` | Keyword Planner discovery, Search Impression Share loss tracking, and spend vs GA4 dwell-time metrics. |
 | **🔭 Observability** | `get_cloud_logs`, `get_cloud_trace`, `verify_changes_logged`, `evaluate_agent_process` | Cloud Logging inspection, W3C trace breakdown, and process evals. |
-
----
 
 ---
 
@@ -160,6 +160,8 @@ While MCP tools provide the **execution layer** (the hands), these bundled Agent
 | **🛡️ 4-Level Campaign Auditor** | [`skills/google-ads-campaign-auditor/`](skills/google-ads-campaign-auditor/SKILL.md) | Standard procedure for running Preflight gate checks and diagnosing campaign quality scores (100/100). |
 | **🪜 Deterministic Bid Ladder** | [`skills/google-ads-bid-ladder/`](skills/google-ads-bid-ladder/SKILL.md) | Stepping CPC bid ceilings strictly by `±0.05 EUR` on `TARGET_SPEND` campaigns with Impression Share guards. |
 | **✍️ 15/4 Golden RSA Writer** | [`skills/google-ads-rsa-writer/`](skills/google-ads-rsa-writer/SKILL.md) | Enforces 15 headlines, 4 descriptions, Dynamic Keyword Insertion (DKI) pinned to Position 1, and atomic rotation. |
+| **🏢 Hub & Spoke Ad Groups** | [`skills/google-ads-hub-and-spoke-adgroups/`](skills/google-ads-hub-and-spoke-adgroups/SKILL.md) | Structuring consolidated Search campaigns into focused Hub & Spoke ad groups with dedicated category landings. |
+| **🎯 Conversion Tracking & Goals** | [`skills/google-ads-conversion-tracking/`](skills/google-ads-conversion-tracking/SKILL.md) | Enhanced Conversions audit, steering Smart Bidding via Primary/Secondary goals, and offline conversion uploads. |
 | **🔍 Search Terms & GA4 Miner** | [`skills/google-ads-search-terms-miner/`](skills/google-ads-search-terms-miner/SKILL.md) | Cross-referencing ad spend with GA4 on-site engagement to harvest negative keywords and eliminate budget leaks. |
 
 ---
