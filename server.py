@@ -27,7 +27,7 @@ from shield.models_campaign import (
 from shield.models_adgroup import (
     AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest
 )
-from shield.models_ad import DeployGoldenRSARequest
+from shield.models_ad import DeployGoldenRSARequest, AdStatusUpdateRequest
 from shield.models_asset import (
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
     CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
@@ -49,7 +49,7 @@ from tools.adgroup_tools import (
     add_ad_group_keywords as add_keywords_func
 )
 
-from tools.rsa_tools import list_campaign_ads, deploy_golden_rsa as rsa_deploy_func
+from tools.rsa_tools import list_campaign_ads, deploy_golden_rsa as rsa_deploy_func, update_ad_status as update_ad_status_func
 from tools.asset_tools import (
     list_account_assets, 
     get_assets_associations as assocs_func, 
@@ -371,7 +371,8 @@ def deploy_golden_rsa(
     descriptions: List[str],
     pinned_h1_dki: str,
     path1: str = "Products",
-    path2: str = "Sale"
+    path2: str = "Sale",
+    ad_id: Optional[str] = None
 ) -> str:
     """
     Deploys a Golden RSA with strict 15/4 validation:
@@ -384,6 +385,7 @@ def deploy_golden_rsa(
     req, rejected = build_request(
         "deploy_golden_rsa", DeployGoldenRSARequest,
         ad_group_id=ad_group_id,
+        ad_id=ad_id,
         final_url=final_url,
         headlines=headlines,
         descriptions=descriptions,
@@ -394,6 +396,25 @@ def deploy_golden_rsa(
     if rejected:
         return rejected
     res = rsa_deploy_func(req)
+    return res.model_dump_json(indent=2)
+
+
+# [запись] Пауза/включение конкретного RSA в группе (защита: не дает отключить последнее активное RSA).
+@mcp_tool()
+def set_ad_status(ad_group_id: str, ad_id: str, enabled: bool) -> str:
+    """
+    Pauses (enabled=False) or enables (enabled=True) one Responsive Search Ad (RSA) in an ad group.
+    ad_id comes from get_campaign_ads. Safeguard: Refuses to pause the last enabled RSA in an ad group.
+    """
+    req, rejected = build_request(
+        "update_ad_status", AdStatusUpdateRequest,
+        ad_group_id=ad_group_id,
+        ad_id=ad_id,
+        enabled=enabled
+    )
+    if rejected:
+        return rejected
+    res = update_ad_status_func(req)
     return res.model_dump_json(indent=2)
 
 # --- LEVEL 4: ASSETS (OBJECTS) TOOLS (Matching Google Ads UI Tabs) ---

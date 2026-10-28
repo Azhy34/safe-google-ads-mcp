@@ -28,6 +28,8 @@ from tools.conversion_tools import (
 from tools.billing_tools import get_google_ads_invoices
 from tools.negative_tools import sync_shared_negative_list
 from tools.merchant_tools import check_merchant_center_link
+from shield.models_ad import AdStatusUpdateRequest, DeployGoldenRSARequest
+from tools.rsa_tools import update_ad_status
 
 class AuditLogCase(unittest.TestCase):
     def setUp(self):
@@ -555,6 +557,61 @@ class TestV26Tools(AuditLogCase):
         self.assertTrue(result2.success)
         self.assertFalse(result2.data.is_linked)
         self.assertIn("НЕ связан", result2.data.audit_findings[0])
+
+    def test_ad_status_update_request_validation(self):
+        req = AdStatusUpdateRequest(ad_group_id="123456789", ad_id="987654321", enabled=False)
+        self.assertEqual(req.ad_group_id, "123456789")
+        self.assertEqual(req.ad_id, "987654321")
+        self.assertFalse(req.enabled)
+
+        with self.assertRaises(Exception):
+            AdStatusUpdateRequest(ad_group_id="abc", ad_id="987654321", enabled=True)
+
+    @mock.patch("tools.rsa_tools.get_ads_client")
+    def test_update_ad_status_pause_safeguard(self, mock_client_getter):
+        client = mock.MagicMock()
+        ga_service = mock.MagicMock()
+        aga_service = mock.MagicMock()
+        client.get_service.side_effect = lambda s: aga_service if s == "AdGroupAdService" else ga_service
+        mock_client_getter.return_value = client
+
+        # Only 1 enabled RSA in ad group
+        row = mock.MagicMock()
+        row.ad_group.name = "Test Group"
+        row.ad_group_ad.ad.id = 987654321
+        row.ad_group_ad.status.name = "ENABLED"
+        ga_service.search.return_value = [row]
+
+        req = AdStatusUpdateRequest(ad_group_id="12345", ad_id="987654321", enabled=False)
+        res = update_ad_status(req)
+        self.assertFalse(res.success)
+        self.assertIn("SAFEGUARD: Cannot pause RSA", str(res.error))
+
+    @mock.patch("tools.rsa_tools.get_ads_client")
+    def test_update_ad_status_success(self, mock_client_getter):
+        client = mock.MagicMock()
+        ga_service = mock.MagicMock()
+        aga_service = mock.MagicMock()
+        client.get_service.side_effect = lambda s: aga_service if s == "AdGroupAdService" else ga_service
+        mock_client_getter.return_value = client
+
+        # 2 enabled RSAs in ad group
+        row1 = mock.MagicMock()
+        row1.ad_group.name = "Test Group"
+        row1.ad_group_ad.ad.id = 111
+        row1.ad_group_ad.status.name = "ENABLED"
+
+        row2 = mock.MagicMock()
+        row2.ad_group.name = "Test Group"
+        row2.ad_group_ad.ad.id = 222
+        row2.ad_group_ad.status.name = "ENABLED"
+
+        ga_service.search.return_value = [row1, row2]
+
+        req = AdStatusUpdateRequest(ad_group_id="12345", ad_id="111", enabled=False)
+        res = update_ad_status(req)
+        self.assertTrue(res.success)
+        self.assertIn("ENABLED -> PAUSED", res.data)
 
 if __name__ == "__main__":
     unittest.main()

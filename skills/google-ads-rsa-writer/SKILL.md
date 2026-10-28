@@ -1,6 +1,6 @@
 ---
 name: google-ads-rsa-writer
-description: Standard operating procedure for writing, validating, and deploying Responsive Search Ads (RSAs) meeting the mandatory 15/4 copy matrix with DKI pinning.
+description: Standard operating procedure for writing, validating, and deploying Responsive Search Ads (RSAs) meeting the mandatory 15/4 copy matrix with DKI pinning and in-place mutation.
 ---
 
 # Google Ads Golden RSA Writer & Deployment Protocol
@@ -18,7 +18,7 @@ Every production RSA must satisfy the strict **15/4 formula**:
 ### 1. Pinned Headline 1 (Dynamic Keyword Insertion)
 Headline 1 must be pinned to Position 1 (`HEADLINE_1`) using Dynamic Keyword Insertion (DKI) to guarantee 100% query relevance:
 - Format: `{KeyWord:Default Fallback Text}` (<= 30 chars total).
-- Example: `{KeyWord:Premium Wall Decor}`
+- Example: `{KeyWord:Premium Running Shoes}`
 
 ### 2. Headlines 2–4 (Core Unique Selling Propositions)
 Specific, concrete value propositions without exclamation mark abuse:
@@ -32,7 +32,7 @@ Specific, concrete value propositions without exclamation mark abuse:
 
 ### 4. Headlines 9–15 (Long-tail Intent & CTAs)
 - Order a Sample Today
-- Discover New 2026 Collection
+- Discover New Collection
 
 ### 5. Descriptions 1–4 (90 Characters Max)
 - Description 1: Primary benefit + shipping terms + warranty.
@@ -40,15 +40,28 @@ Specific, concrete value propositions without exclamation mark abuse:
 - Description 3: Customization / sample credit options.
 - Description 4: Strong, polite call to action.
 
-## Atomic Deployment via Smart Facade
-Deploy the RSA using the atomic rotation tool:
+## Deployment & In-Place Mutation via Smart Facade
+
+### In-Place Update (Preserving Ad History)
+If the ad group already has an active RSA, `deploy_golden_rsa` automatically updates the ad in-place via `AdService.mutate_ads` without creating duplicate ads or fragmenting Quality Score history:
 ```python
 deploy_golden_rsa(
     ad_group_id="<AD_GROUP_ID>",
+    final_url="https://example.com/product",
     headlines=[...15 strings...],
     descriptions=[...4 strings...],
-    final_url="https://example.com/product",
-    pinned_headline_1="{KeyWord:Fallback}"
+    pinned_h1_dki="{KeyWord:Fallback}",
+    ad_id="<OPTIONAL_EXISTING_AD_ID>"  # Auto-detected if omitted
 )
 ```
-*The tool automatically validates all 19 strings against Pydantic limits, creates the new RSA, and pauses the lowest-strength existing ad atomically.*
+
+### Managing Serving Status (`set_ad_status`)
+To enable or pause individual ads in an ad group:
+```python
+set_ad_status(
+    ad_group_id="<AD_GROUP_ID>",
+    ad_id="<AD_ID>",
+    enabled=False  # True to enable, False to pause
+)
+```
+*Deterministic Safeguard: The tool strictly refuses to pause the last active RSA in an ad group, preventing accidental traffic loss.*

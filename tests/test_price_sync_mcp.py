@@ -335,7 +335,8 @@ class ServerRegistrationConsistencyTests(unittest.TestCase):
         self.assertIn("check_merchant_center_link", tools)
         self.assertIn("create_callout_assets", tools)
         self.assertIn("create_structured_snippet_asset", tools)
-        self.assertEqual(len(tools), 53)
+        self.assertIn("set_ad_status", tools)
+        self.assertEqual(len(tools), 54)
 
     def test_schema_file_exists_and_matches(self):
         schema_path = Path("C:/Users/Mikhail/.gemini/antigravity-ide/mcp/google-ads-mcp/sync_price_extension.json")

@@ -50,7 +50,7 @@ LEVER_GROUPS: Dict[str, Tuple[str, ...]] = {
     "budget": ("update_campaign_budget",),
     "status": ("update_campaign_status", "update_keyword_status"),
     "negatives": ("apply_negative_shield", "add_negative_keywords", "remove_negative_keyword"),
-    "ads": ("deploy_golden_rsa",),
+    "ads": ("deploy_golden_rsa", "update_ad_status"),
     "assets": ("link_asset_to_entity", "unlink_asset_from_entity"),
 }
 

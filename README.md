@@ -1,5 +1,5 @@
-﻿# 🛡️ Safe Google Ads FastMCP Server
-> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **38 purpose-built tools**, and **W3C distributed tracing**.
+# 🛡️ Safe Google Ads FastMCP Server
+> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **54 purpose-built tools**, and **W3C distributed tracing**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -132,7 +132,7 @@ Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
 
 ---
 
-## 🧰 53 Custom FastMCP Tools Catalog
+## 🧰 54 Custom FastMCP Tools Catalog
 
 The tools mirror Google Ads operational hierarchy, split into granular objects and transactional Smart Facades:
 
@@ -141,7 +141,7 @@ The tools mirror Google Ads operational hierarchy, split into granular objects a
 | **🚦 Gate & Health** | `preflight_log_check`, `analyze_tool_health` | Mandatory pre-flight lock; anomaly & error spike audit. |
 | **📢 Campaigns & Bids** | `create_search_campaign`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. |
 | **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, cross-group collision fixer. |
-| **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, Dynamic Keyword Insertion (DKI), atomic rotation (pauses oldest ad atomically). |
+| **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa`, `set_ad_status` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, Dynamic Keyword Insertion (DKI), in-place mutation via `AdService.mutate_ads`, and status toggles with last-active ad safeguards. |
 | **🧩 Google Assets** | `create_price_asset`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, Sitelinks, Callouts, Structured Snippets with Google approved headers, and asset performance labeling. |
 | **🧹 Negative Shields** | `apply_negative_shield`, `sync_shared_negative_list`, `mine_search_terms_and_harvest_negatives`, `add_negative_keywords`, `remove_negative_keyword` | E-commerce waste harvesting, multi-country negative keyword sets, and atomic shared negative list sync. |
 | **🎯 Conversions & Tracking** | `check_enhanced_conversions_status`, `set_conversion_action_goal`, `upload_click_conversion` | Enhanced Conversions audit (Customer Data Terms, DMA compliance), Primary/Secondary goal steering for Smart Bidding, and hashed offline conversion upload. |
@@ -163,6 +163,7 @@ While MCP tools provide the **execution layer** (the hands), these bundled Agent
 | **🏢 Hub & Spoke Ad Groups** | [`skills/google-ads-hub-and-spoke-adgroups/`](skills/google-ads-hub-and-spoke-adgroups/SKILL.md) | Structuring consolidated Search campaigns into focused Hub & Spoke ad groups with dedicated category landings. |
 | **🎯 Conversion Tracking & Goals** | [`skills/google-ads-conversion-tracking/`](skills/google-ads-conversion-tracking/SKILL.md) | Enhanced Conversions audit, steering Smart Bidding via Primary/Secondary goals, and offline conversion uploads. |
 | **🔍 Search Terms & GA4 Miner** | [`skills/google-ads-search-terms-miner/`](skills/google-ads-search-terms-miner/SKILL.md) | Cross-referencing ad spend with GA4 on-site engagement to harvest negative keywords and eliminate budget leaks. |
+| **🎛️ FastMCP Manager & Orchestrator** | [`skills/google-ads-mcp-manager/`](skills/google-ads-mcp-manager/SKILL.md) | Master multi-level orchestrator: 5-stage lifecycle, 4 account invariants, tool extension protocol, and watchdog SOP rules. |
 
 ---
 

@@ -196,7 +196,7 @@ MUTATION_FUNCTIONS = {
     "create_callout_assets", "create_structured_snippet_asset",
     "apply_negative_shield", "add_negative_keywords", "sync_shared_negative_list",
     "auto_fix_collisions_and_dupes", "update_keyword_status", "remove_negative_keyword",
-    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords",
+    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords", "update_ad_status",
 }
 
 

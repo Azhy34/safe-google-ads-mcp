@@ -31,13 +31,18 @@ class GoogleRSAAdRecord(BaseModel):
     approval_status: str = Field(default="UNKNOWN", description="Overall policy approval status")
 
 class DeployGoldenRSARequest(BaseModel):
-    ad_group_id: str = Field(..., description="Target Ad Group ID")
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Target Ad Group ID")
+    ad_id: Optional[str] = Field(
+        default=None,
+        pattern=r"^\d+$",
+        description="Optional existing RSA Ad ID to update in-place via AdService. If omitted and the Ad Group already has an ENABLED RSA, that existing RSA is updated in-place automatically."
+    )
     final_url: str = Field(..., description="Destination landing URL")
     headlines: List[str] = Field(..., min_length=15, max_length=15, description="MUST contain EXACTLY 15 headlines (<=30 chars each); headlines[0] must equal pinned_h1_dki")
     descriptions: List[str] = Field(..., min_length=4, max_length=4, description="MUST contain EXACTLY 4 descriptions (<=90 chars each)")
     pinned_h1_dki: str = Field(..., description="Headline 1 pinned with Dynamic Keyword Insertion, e.g. {KeyWord:Premium Running Shoes}")
-    path1: Optional[str] = Field(default="Tapete", max_length=15, description="Display URL Path 1 (max 15 chars)")
-    path2: Optional[str] = Field(default="Kinder", max_length=15, description="Display URL Path 2 (max 15 chars)")
+    path1: Optional[str] = Field(default="Shop", max_length=15, description="Display URL Path 1 (max 15 chars)")
+    path2: Optional[str] = Field(default="Sale", max_length=15, description="Display URL Path 2 (max 15 chars)")
 
     @field_validator("final_url")
     def validate_landing_url(cls, v):
@@ -73,3 +78,8 @@ class DeployGoldenRSARequest(BaseModel):
         if self.headlines[0] != self.pinned_h1_dki:
             raise ValueError(f"headlines[0] must equal pinned_h1_dki '{self.pinned_h1_dki}', got '{self.headlines[0]}'")
         return self
+
+class AdStatusUpdateRequest(BaseModel):
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Parent Ad Group ID")
+    ad_id: str = Field(..., pattern=r"^\d+$", description="Target Ad ID to update status")
+    enabled: bool = Field(..., description="True to enable, False to pause")
