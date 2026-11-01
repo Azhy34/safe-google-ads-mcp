@@ -24,6 +24,8 @@ EVALS_LOG_NAME = "google-ads-mcp-evals"
 EVALS_WRITE_CHUNK = 100
 # Only Google Ads calls become child spans; Cloud Logging / Cloud Trace own gRPC calls stay out of the trace
 GOOGLE_ADS_GRPC_SERVICE_PREFIX = "google.ads.googleads"
+# Merchant API requests (core/merchant_client.py) are plain HTTP, not gRPC, so they are spans of our own: merchant_api.<request>
+MERCHANT_API_SPAN_PREFIX = "merchant_api."
 CLOUD_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 TRACE_FIELD_PREFIX = "logging.googleapis.com/"
 # Python logging has no NOTICE. Cloud Logging's NOTICE is 300; google-cloud-logging passes an unknown levelno through
@@ -207,7 +209,8 @@ JOURNAL_SPAN_PREFIXES = ("cloud_logging.", "cloud_trace.", "journal.")
 
 @contextmanager
 def child_span(name: str, attributes: Optional[Dict[str, Any]] = None):
-    """A span inside the running tool call (name starts with one of JOURNAL_SPAN_PREFIXES); a no-op while tracing is off."""
+    """A span inside the running tool call (a journal read: name starts with one of JOURNAL_SPAN_PREFIXES; a Merchant API
+    request: MERCHANT_API_SPAN_PREFIX); a no-op while tracing is off."""
     start()
     tracer = _state["tracer"]
     if tracer is None:

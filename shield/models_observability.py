@@ -49,7 +49,9 @@ class TraceRecord(BaseModel):
     google_ads_api_ms: float = Field(..., description="Time spent inside Google Ads API calls")
     journal_reads: int = Field(0, description="Child spans that read the journal (Cloud Logging, Cloud Trace, local file)")
     journal_read_ms: float = Field(0.0, description="Time spent reading the journal")
-    own_code_ms: float = Field(..., description="total_ms - google_ads_api_ms - journal_read_ms: our code, auth, serialization")
+    merchant_api_calls: int = Field(0, description="Child spans that are Merchant API requests (merchant_api.*)")
+    merchant_api_ms: float = Field(0.0, description="Time spent inside Merchant API requests")
+    own_code_ms: float = Field(..., description="total_ms - google_ads_api_ms - journal_read_ms - merchant_api_ms: our code, auth, serialization")
     spans: List[TraceSpanRecord] = Field(default_factory=list, description="Spans ordered by start time")
     logs_url: str = Field(..., description="Journal entries of this trace in Logs Explorer")
 

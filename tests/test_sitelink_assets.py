@@ -18,24 +18,26 @@ from pydantic import ValidationError
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import cloud_sink, error_shield
 from shield.error_shield import MUTATION_FUNCTIONS, build_request
 from shield.models_asset import CreateSitelinkAssetsRequest, SitelinkItem
 from tools.asset_tools import create_sitelink_assets, preview_sitelink_assets
 
-CAMPAIGN = "24386071357"
-BASE = "https://example.com"
+CAMPAIGN = "2000000001"
+BASE = "https://example-shop.test"
 
 
-def link(text="Organic Cotton Hoodie", url=f"{BASE}/motive/fototapete-wald", d1="Waldtiere fürs Kinderzimmer", d2="Kostenloser Versand DE & AT"):
+def link(text="Fototapete Wald", url=f"{BASE}/motive/fototapete-wald", d1="Waldtiere fürs Kinderzimmer", d2="Kostenloser Versand DE & AT"):
     return {"link_text": text, "description1": d1, "description2": d2, "final_url": url}
 
 
 def four():
     return [
         link(),
-        link("Ergonomic Office Chair", f"{BASE}/motive/tapete-dschungel", "Safari & Dschungel Motive", "Direkt vom Hersteller"),
+        link("Tapete Dschungel", f"{BASE}/motive/tapete-dschungel", "Safari & Dschungel Motive", "Direkt vom Hersteller"),
         link("Weltraum Tapete", f"{BASE}/motive/weltraum-tapete", "Planeten & Sonnensystem", "Muster DIN A4 für 16,50 €"),
         link("Alle Motive ansehen", f"{BASE}/motive", "Fototapeten nach Thema", "Vlies, Paste-the-Wall"),
     ]
@@ -68,8 +70,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(len(req.sitelinks), 4)
 
     def test_www_host_is_accepted_and_texts_are_stripped(self):
-        item = SitelinkItem(**link("  Organic Cotton Hoodie  ", "https://www.example.com/motive/fototapete-wald"))
-        self.assertEqual(item.link_text, "Organic Cotton Hoodie")
+        item = SitelinkItem(**link("  Fototapete Wald  ", "https://www.example-shop.test/motive/fototapete-wald"))
+        self.assertEqual(item.link_text, "Fototapete Wald")
 
     def test_text_limits(self):
         with self.assertRaises(ValidationError):
@@ -82,15 +84,18 @@ class ContractTests(unittest.TestCase):
 
     def test_address_must_be_a_clean_https_page_of_the_site(self):
         for bad in (
-            "http://example.com/motive",                       # not https
-            f"{BASE}/motive?query=bad",                        # query string
-            f"{BASE}/motive#faq",                              # anchor
+            "http://example-shop.test/motive",                       # not https
+            "https://shop.marketplace.example/de/listing/1",           # Marketplace
+            "https://example-shop.test.evil.example/motive",         # look-alike host
+            "https://example.com/motive",                             # other site
+            f"{BASE}/motive?coupon=SAVE10",                         # query string
+            f"{BASE}/motive#faq",                                     # anchor
         ):
             with self.subTest(url=bad), self.assertRaises(ValidationError):
                 SitelinkItem(**link(url=bad))
 
     def test_forbidden_words_of_the_site_rules(self):
-        for bad in ("forbidden_term in text", "Schadstofffrei", "Allergiefrei", "promo code"):
+        for bad in ("Mit SAVE10 sparen", "Toxin-free & sicher", "Hypoallergenic", "Auch auf Marketplace"):
             with self.subTest(text=bad), self.assertRaises(ValidationError):
                 SitelinkItem(**link(d1=bad))
 
@@ -108,7 +113,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=twin_url)
         with self.assertRaises(ValidationError):
-            CreateSitelinkAssetsRequest(campaign_id="24386071357; DROP", sitelinks=four())
+            CreateSitelinkAssetsRequest(campaign_id="2000000001; DROP", sitelinks=four())
 
     def test_only_the_creating_tool_is_a_mutation(self):
         self.assertIn("create_sitelink_assets", MUTATION_FUNCTIONS)
@@ -119,7 +124,7 @@ class ShieldRejectionTests(AuditLogCase):
     def test_rejection_is_logged_with_the_right_action_type(self):
         for name, action in (("preview_sitelink_assets", "READ"), ("create_sitelink_assets", "MUTATION")):
             req, rejected = build_request(name, CreateSitelinkAssetsRequest, action_type=action,
-                                          campaign_id=CAMPAIGN, sitelinks=[link(url="https://store.example.com/item/x")] * 2)
+                                          campaign_id=CAMPAIGN, sitelinks=[link(url="https://shop.marketplace.example/x")] * 2)
             self.assertIsNone(req)
             self.assertEqual(json.loads(rejected)["error"]["code"], "REQUEST_REJECTED")
         entries = self.log_entries()
@@ -128,7 +133,7 @@ class ShieldRejectionTests(AuditLogCase):
 
 
 def row_campaign(status="PAUSED"):
-    return SimpleNamespace(campaign=SimpleNamespace(id=int(CAMPAIGN), name="E-Commerce Search DE+AT", status=SimpleNamespace(name=status)))
+    return SimpleNamespace(campaign=SimpleNamespace(id=int(CAMPAIGN), name="ExampleShop Search DE - Site", status=SimpleNamespace(name=status)))
 
 
 def row_asset(asset_id, item):
@@ -138,7 +143,7 @@ def row_asset(asset_id, item):
 
 
 def row_linked(asset_id):
-    return SimpleNamespace(campaign_asset=SimpleNamespace(asset=f"customers/1234567890/assets/{asset_id}"))
+    return SimpleNamespace(campaign_asset=SimpleNamespace(asset=f"customers/1112223334/assets/{asset_id}"))
 
 
 class FakeAds:
@@ -173,7 +178,7 @@ class PreviewTests(AuditLogCase):
     def test_preview_changes_nothing_and_plans_four_new_sitelinks(self):
         ads = FakeAds()
         with ads.patched():
-            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()), customer_id="1234567890")
+            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()), customer_id="1112223334")
         self.assertTrue(result.success)
         plan = json.loads(result.data)
         self.assertEqual([i["action"] for i in plan["items"]], ["create"] * 4)
@@ -187,7 +192,7 @@ class PreviewTests(AuditLogCase):
     def test_preview_warns_below_four_sitelinks(self):
         ads = FakeAds()
         with ads.patched():
-            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()[:2]), customer_id="1234567890")
+            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()[:2]), customer_id="1112223334")
         plan = json.loads(result.data)
         self.assertEqual(plan["sitelinks_on_campaign_after"], 2)
         self.assertEqual(len(plan["warnings"]), 1)
@@ -195,7 +200,7 @@ class PreviewTests(AuditLogCase):
     def test_unknown_campaign_is_a_typed_failure(self):
         ads = FakeAds(campaigns=[])
         with ads.patched():
-            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()), customer_id="1234567890")
+            result = preview_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=four()), customer_id="1112223334")
         self.assertFalse(result.success)
         self.assertEqual(result.error.code, "CAMPAIGN_NOT_FOUND")
 
@@ -203,7 +208,7 @@ class PreviewTests(AuditLogCase):
 class CreateTests(AuditLogCase):
     def create(self, ads, sitelinks=None):
         with ads.patched():
-            return create_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=sitelinks or four()), customer_id="1234567890")
+            return create_sitelink_assets(CreateSitelinkAssetsRequest(campaign_id=CAMPAIGN, sitelinks=sitelinks or four()), customer_id="1112223334")
 
     def test_creates_four_assets_and_links_them_in_two_atomic_requests(self):
         ads = FakeAds()

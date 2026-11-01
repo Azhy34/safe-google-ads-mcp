@@ -2,7 +2,7 @@
 Process evals: does an agent session follow the working order written in the google-ads-mcp skill?
 The Pydantic shield judges one call; these rules judge a whole session from the journal, deterministically
 (no model involved, the same journal always gives the same verdicts). Advisory only: nothing is blocked,
-violations are listed for the owner. Rules mirror the skill's "Порядок работы":
+violations are listed for the owner. Rules mirror the skill's "working order":
 
   READ_FIRST      step 2  get_change_history was read before the session's first account change
   ONE_LEVER       step 6  changes made together touch one lever group only (LEVER_GROUPS)
@@ -48,10 +48,11 @@ MAX_VIOLATIONS = 100
 LEVER_GROUPS: Dict[str, Tuple[str, ...]] = {
     "bid": ("step_campaign_cpc_ceiling", "update_ad_group_bid"),
     "budget": ("update_campaign_budget",),
-    "status": ("update_campaign_status", "update_keyword_status"),
+    "status": ("update_campaign_status", "update_keyword_status", "update_ad_group_status"),
     "negatives": ("apply_negative_shield", "add_negative_keywords", "remove_negative_keyword"),
     "ads": ("deploy_golden_rsa", "update_ad_status"),
-    "assets": ("link_asset_to_entity", "unlink_asset_from_entity"),
+    "assets": ("link_asset_to_entity", "unlink_asset_from_entity", "create_image_asset"),
+    "targeting": ("update_campaign_location",),
 }
 
 def _group_of(function: str) -> str:

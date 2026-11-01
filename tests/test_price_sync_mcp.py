@@ -16,6 +16,8 @@ from pydantic import ValidationError
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import error_shield, cloud_sink
 from shield.error_shield import build_request, MUTATION_FUNCTIONS
@@ -60,16 +62,16 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
 
     def test_valid_request(self):
         req = SyncPriceExtensionRequest(
-            entity_id="24015242821",
+            entity_id="2000000003",
             level="CAMPAIGN",
-            name="Woodland Preise Test",
+            name="Alpha Preise Test",
             offerings=[
                 PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
                 PriceOfferingItem(header="200x250 cm", description="Vliestapete", price_eur=199.00, final_url="https://example.com/2"),
                 PriceOfferingItem(header="250x250 cm", description="Vliestapete", price_eur=249.00, final_url="https://example.com/3"),
             ]
         )
-        self.assertEqual(req.entity_id, "24015242821")
+        self.assertEqual(req.entity_id, "2000000003")
         self.assertEqual(req.level, "CAMPAIGN")
         self.assertEqual(len(req.offerings), 3)
         self.assertEqual(req.price_type, "PRODUCT_TIERS")
@@ -79,7 +81,7 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
     def test_rejects_under_3_offerings(self):
         with self.assertRaises(ValidationError) as ctx:
             SyncPriceExtensionRequest(
-                entity_id="24015242821",
+                entity_id="2000000003",
                 name="Too few offerings",
                 offerings=[
                     PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
@@ -96,7 +98,7 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
         ]
         with self.assertRaises(ValidationError) as ctx:
             SyncPriceExtensionRequest(
-                entity_id="24015242821",
+                entity_id="2000000003",
                 name="Too many offerings",
                 offerings=items
             )
@@ -106,7 +108,7 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
     def test_rejects_invalid_level(self):
         with self.assertRaises(ValidationError):
             SyncPriceExtensionRequest(
-                entity_id="24015242821",
+                entity_id="2000000003",
                 level="INVALID_LEVEL",  # only CUSTOMER, CAMPAIGN, AD_GROUP allowed
                 name="Invalid level",
                 offerings=[
@@ -125,7 +127,7 @@ class ShieldRejectionTests(AuditLogCase):
             "sync_price_extension",
             SyncPriceExtensionRequest,
             action_type="MUTATION",
-            entity_id="24015242821",
+            entity_id="2000000003",
             level="CAMPAIGN",
             name="Empty offerings test",
             offerings=[]
@@ -184,7 +186,7 @@ class SmartFacadeLogicTests(AuditLogCase):
         asset_service = mock.MagicMock()
         asset_service.asset_path.side_effect = lambda cid, aid: f"customers/{cid}/assets/{aid}"
         asset_service.mutate_assets.return_value = mock.MagicMock(
-            results=[mock.MagicMock(resource_name="customers/1234567890/assets/NEW_ASSET_777")]
+            results=[mock.MagicMock(resource_name="customers/1112223334/assets/NEW_ASSET_777")]
         )
 
         ga_service = mock.MagicMock()
@@ -218,19 +220,19 @@ class SmartFacadeLogicTests(AuditLogCase):
 
         # Simulate 2 existing active Price Assets on Campaign
         row1 = mock.MagicMock()
-        row1.campaign_asset.asset = "customers/1234567890/assets/OLD_ASSET_111"
-        row1.campaign_asset.resource_name = "customers/1234567890/campaignAssets/24015~OLD_ASSET_111~PRICE"
+        row1.campaign_asset.asset = "customers/1112223334/assets/OLD_ASSET_111"
+        row1.campaign_asset.resource_name = "customers/1112223334/campaignAssets/2000000003~OLD_ASSET_111~PRICE"
 
         row2 = mock.MagicMock()
-        row2.campaign_asset.asset = "customers/1234567890/assets/OLD_ASSET_222"
-        row2.campaign_asset.resource_name = "customers/1234567890/campaignAssets/24015~OLD_ASSET_222~PRICE"
+        row2.campaign_asset.asset = "customers/1112223334/assets/OLD_ASSET_222"
+        row2.campaign_asset.resource_name = "customers/1112223334/campaignAssets/2000000003~OLD_ASSET_222~PRICE"
 
         ga_service.search.return_value = [row1, row2]
 
         req = SyncPriceExtensionRequest(
-            entity_id="24015242821",
+            entity_id="2000000003",
             level="CAMPAIGN",
-            name="Woodland New Prices",
+            name="Alpha New Prices",
             offerings=[
                 PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
                 PriceOfferingItem(header="200x250 cm", description="Vliestapete", price_eur=199.00, final_url="https://example.com/2"),
@@ -239,7 +241,7 @@ class SmartFacadeLogicTests(AuditLogCase):
         )
 
         with mock.patch("tools.asset_tools.get_ads_client", return_value=client):
-            result = sync_price_extension(req, customer_id="1234567890")
+            result = sync_price_extension(req, customer_id="1112223334")
 
         # Unwrap ServiceResult if wrapped
         result_text = result.data if hasattr(result, "data") else result
@@ -268,7 +270,7 @@ class SmartFacadeLogicTests(AuditLogCase):
         req = SyncPriceExtensionRequest(
             entity_id="197094455654",
             level="AD_GROUP",
-            name="Jungle AdGroup Prices",
+            name="Beta AdGroup Prices",
             offerings=[
                 PriceOfferingItem(header="Tier 1", description="desc", price_eur=110.0, final_url="https://example.com/1"),
                 PriceOfferingItem(header="Tier 2", description="desc", price_eur=120.0, final_url="https://example.com/2"),
@@ -277,7 +279,7 @@ class SmartFacadeLogicTests(AuditLogCase):
         )
 
         with mock.patch("tools.asset_tools.get_ads_client", return_value=client):
-            result = sync_price_extension(req, customer_id="1234567890")
+            result = sync_price_extension(req, customer_id="1112223334")
 
         result_text = result.data if hasattr(result, "data") else result
         self.assertIn("Created Asset NEW_ASSET_777", result_text)
@@ -291,12 +293,12 @@ class SmartFacadeLogicTests(AuditLogCase):
 
         # 1 old customer asset
         row = mock.MagicMock()
-        row.customer_asset.asset = "customers/1234567890/assets/OLD_CUST_999"
-        row.customer_asset.resource_name = "customers/1234567890/customerAssets/OLD_CUST_999~PRICE"
+        row.customer_asset.asset = "customers/1112223334/assets/OLD_CUST_999"
+        row.customer_asset.resource_name = "customers/1112223334/customerAssets/OLD_CUST_999~PRICE"
         ga_service.search.return_value = [row]
 
         req = SyncPriceExtensionRequest(
-            entity_id="1234567890",
+            entity_id="1112223334",
             level="CUSTOMER",
             name="Global Account Prices",
             offerings=[
@@ -307,7 +309,7 @@ class SmartFacadeLogicTests(AuditLogCase):
         )
 
         with mock.patch("tools.asset_tools.get_ads_client", return_value=client):
-            result = sync_price_extension(req, customer_id="1234567890")
+            result = sync_price_extension(req, customer_id="1112223334")
 
         result_text = result.data if hasattr(result, "data") else result
         self.assertIn("Unlinked 1 old asset(s)", result_text)
@@ -335,15 +337,16 @@ class ServerRegistrationConsistencyTests(unittest.TestCase):
         self.assertIn("check_merchant_center_link", tools)
         self.assertIn("create_callout_assets", tools)
         self.assertIn("create_structured_snippet_asset", tools)
-        self.assertIn("set_ad_status", tools)
-        self.assertEqual(len(tools), 54)
+        self.assertIn("set_ad_group_status", tools)
+        self.assertIn("create_image_asset", tools)
+        self.assertIn("create_shopping_campaign", tools)
+        self.assertIn("set_campaign_location", tools)
+        self.assertIn("check_shopping_readiness", tools)
+        self.assertEqual(len(tools), 59)
 
-    def test_schema_file_exists_and_matches(self):
-        schema_path = Path("C:/Users/Mikhail/.gemini/antigravity-ide/mcp/google-ads-mcp/sync_price_extension.json")
-        self.assertTrue(schema_path.exists(), "Schema file sync_price_extension.json must exist in MCP directory")
-        
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        self.assertEqual(schema["name"], "sync_price_extension")
+    def test_registered_tool_schema_matches(self):
+        import server
+        schema = {"parameters": server.mcp._tool_manager._tools["sync_price_extension"].parameters}
         props = schema["parameters"]["properties"]
         self.assertIn("entity_id", props)
         self.assertIn("name", props)

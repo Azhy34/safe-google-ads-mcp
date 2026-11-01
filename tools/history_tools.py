@@ -1,6 +1,7 @@
 import sys
 import enum
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import date, datetime, timedelta, timezone
@@ -20,7 +21,11 @@ MAX_DAYS = 30
 # get_change_history output is read by an agent: 500 rows of 8 fields were ~380 000 characters, more than a chat takes in
 DEFAULT_ROWS = 200
 MAX_ROWS = 500
-MAX_VERIFY_ROWS = 2000
+# change_event refuses any LIMIT above 10000 (INVALID_LIMIT_CLAUSE).
+CHANGE_EVENT_LIMIT_CEILING = 10000
+# verify_changes_logged reads the whole period oldest first and requests one row more than it keeps:
+# if that row comes back, the period holds more and the newest events were cut off. So the request stays at the ceiling.
+MAX_VERIFY_ROWS = CHANGE_EVENT_LIMIT_CEILING - 1
 MAX_FIELDS_PER_CHANGE = 6
 MAX_VALUE_CHARS = 80
 # A change lands in change_event within the logged call's latency; allow a few seconds of clock skew.
@@ -28,6 +33,8 @@ MAX_VALUE_CHARS = 80
 CLOCK_SKEW_SECONDS = 5
 # change_event shows API changes only after a delay; unmatched calls younger than this are "pending", not "no change"
 CHANGE_EVENT_LAG_MINUTES = 15
+# ids (campaign, ad group, asset...) are 6+ digits; shorter numbers are geo targets, counts and the like
+_ID_TOKEN = re.compile(r"\d{6,}")
 
 def _render(name: str, value) -> str:
     if isinstance(value, enum.Enum):
@@ -179,6 +186,52 @@ def _read_audit_log() -> List[Dict[str, Any]]:
             continue
     return _with_time(entries)
 
+def _call_ids(entry: Dict[str, Any]) -> set:
+    """Ids (campaign, ad group, asset...) a logged call named in its arguments."""
+    return set(_ID_TOKEN.findall(json.dumps(entry.get("args"), ensure_ascii=False, default=str)))
+
+def _resource_ids(resource_name: str) -> set:
+    """Ids in a change_event resource name; the account id leads every name and tells nothing, so it is dropped."""
+    parts = resource_name.split("/", 2)
+    tail = parts[2] if len(parts) == 3 and parts[0] == "customers" else resource_name
+    return set(_ID_TOKEN.findall(tail))
+
+def _is_dry_run(entry: Dict[str, Any]) -> bool:
+    args = entry.get("args")
+    args = args if isinstance(args, dict) else {}
+    requests = list(args.get("args") or []) + [args.get("kwargs") or {}]
+    return any(isinstance(r, dict) and r.get("dry_run") is True for r in requests)
+
+def _attribute_events(events: List[Dict[str, Any]], calls: List[Dict[str, Any]]):
+    """
+    events: [{"time": UTC datetime, "ids": set}], calls: audit entries (with "_t" = start, "latency_ms").
+    Returns ({call index: number of events}, [indexes of events no call explains]).
+    A change belongs to a call whose [start, start + latency] holds it, a few seconds of clock skew allowed.
+    Among the calls that fit in time, the one that named the same ids in its arguments wins. Time alone misleads:
+    Google's clock runs a few tenths of a second behind the local one, and calls a second apart (a loop of
+    link_asset_to_entity) overlap within the skew, so an event lands on its neighbour and the call it belongs to
+    looks like "no change in the account".
+    """
+    call_ids = [_call_ids(c) for c in calls]
+    matched_counts: Dict[int, int] = {}
+    unmatched: List[int] = []
+    for n, event in enumerate(events):
+        best = None
+        for i, entry in enumerate(calls):
+            start = entry["_t"]
+            end = start + timedelta(milliseconds=entry.get("latency_ms", 0))
+            outside = max((start - event["time"]).total_seconds(), (event["time"] - end).total_seconds(), 0.0)
+            if outside > CLOCK_SKEW_SECONDS:
+                continue
+            score = (-len(event["ids"] & call_ids[i]), outside, abs((end - event["time"]).total_seconds()))
+            if best is None or score < best[1]:
+                best = (i, score)
+        if best is None:
+            unmatched.append(n)
+        else:
+            matched_counts[best[0]] = matched_counts.get(best[0], 0) + 1
+    return matched_counts, unmatched
+
 SOURCES = ("local", "cloud", "auto")
 
 @handle_google_ads_errors
@@ -192,6 +245,10 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
     journal when it reaches back over the whole period, else this machine's file.
     Changes older than the journal cannot be checked: they are counted in before_log_started, and when that is all
     there is the verdict is NOT_VERIFIABLE_BEFORE_JOURNAL, never ALL_API_CHANGES_LOGGED.
+    The period is read oldest first up to MAX_VERIFY_ROWS changes; if Google has more, the verdict is INCOMPLETE_HISTORY
+    (history_truncated=true, coverage_note says up to when) and calls after the cut-off are listed as
+    unchecked_after_truncation, never as "no change". Dry runs (dry_run=true) are only counted in dry_run_calls.
+    A change is credited to the call that named the same ids in its arguments, then to the nearest one in time.
     """
     _check_days(days)
     if source not in SOURCES:
@@ -219,7 +276,10 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
 
     tz_name = list(ga_service.search(customer_id=customer_id, query="SELECT customer.time_zone FROM customer LIMIT 1"))[0].customer.time_zone
     tz = ZoneInfo(tz_name)
-    mutations = [e for e in audit if e.get("action_type") == "MUTATION" and e.get("success")]
+    account_calls = [e for e in audit if e.get("action_type") == "MUTATION" and e.get("success")]
+    # a dry run only previews: it leaves nothing in the account, so it is neither expected there nor matched to a change
+    dry_runs = [e for e in account_calls if _is_dry_run(e)]
+    mutations = [e for e in account_calls if not _is_dry_run(e)]
     # MCP requests never share a trace; a shared trace_id means several calls ran in one process (a script)
     trace_counts: Dict[str, int] = {}
     for e in audit:
@@ -227,12 +287,18 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
         if trace:
             trace_counts[trace] = trace_counts.get(trace, 0) + 1
 
-    matched_counts: Dict[int, int] = {}
-    not_in_log, before_log, other_clients = [], [], []
+    # one row more than the ceiling: if it comes back, the period holds newer changes that were cut off (oldest first)
+    rows = list(_search_change_events(ga_service, customer_id, days, None, MAX_VERIFY_ROWS + 1, "ASC"))
+    truncated = len(rows) > MAX_VERIFY_ROWS
+    rows = rows[:MAX_VERIFY_ROWS]
+    covered_until = None
+
+    before_log, other_clients, to_match = [], [], []
     api_changes = 0
-    for row in _search_change_events(ga_service, customer_id, days, None, MAX_VERIFY_ROWS, "ASC"):
+    for row in rows:
         event = row.change_event
         changed_utc = _parse_account_time(event.change_date_time, tz)
+        covered_until = changed_utc
         item = {
             "changed_at": event.change_date_time,
             "client_type": event.client_type.name,
@@ -245,29 +311,21 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
             other_clients.append(item)
             continue
         api_changes += 1
-        if log_start is None or changed_utc < log_start:
+        # Google's clock is a few tenths of a second behind: the first logged call's own change reads as older than the journal
+        if log_start is None or changed_utc < log_start - timedelta(seconds=CLOCK_SKEW_SECONDS):
             before_log.append(item)
             continue
 
-        # The change must fall inside the call [start, start + latency]; outside it only within clock skew.
-        best = None
-        for i, entry in enumerate(mutations):
-            start = entry["_t"]
-            end = start + timedelta(milliseconds=entry.get("latency_ms", 0))
-            outside = max((start - changed_utc).total_seconds(), (changed_utc - end).total_seconds(), 0.0)
-            if outside > CLOCK_SKEW_SECONDS:
-                continue
-            score = (outside, abs((end - changed_utc).total_seconds()))
-            if best is None or score < best[1]:
-                best = (i, score)
-        if best is None:
-            not_in_log.append(item)
-        else:
-            matched_counts[best[0]] = matched_counts.get(best[0], 0) + 1
+        to_match.append((item, {"time": changed_utc, "ids": _resource_ids(event.change_resource_name)}))
+
+    matched_counts, unmatched = _attribute_events([m[1] for m in to_match], mutations)
+    not_in_log = [to_match[n][0] for n in unmatched]
 
     window_start = datetime.combine(date.today() - timedelta(days=days - 1), datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
     lag_cutoff = datetime.now(timezone.utc) - timedelta(minutes=CHANGE_EVENT_LAG_MINUTES)
-    matched_calls, logged_without_change, pending_in_change_history = [], [], []
+    # a cut-off history says nothing about calls that came after its last event
+    unchecked_cutoff = covered_until - timedelta(seconds=CLOCK_SKEW_SECONDS) if truncated and covered_until else None
+    matched_calls, logged_without_change, pending_in_change_history, unchecked_after_truncation = [], [], [], []
     for i, entry in enumerate(mutations):
         if entry["_t"] < window_start:
             continue
@@ -281,6 +339,8 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
         }
         if i in matched_counts:
             matched_calls.append({**call, "account_changes": matched_counts[i]})
+        elif unchecked_cutoff is not None and entry["_t"] > unchecked_cutoff:
+            unchecked_after_truncation.append(call)
         elif entry["_t"] > lag_cutoff:
             pending_in_change_history.append(call)
         else:
@@ -291,16 +351,25 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
         verdict = "NO_AUDIT_LOG"
     elif not_in_log:
         verdict = "CHANGES_OUTSIDE_MCP_LOG"
+    elif truncated:
+        # the verdict "all logged" would only cover the changes that were read
+        verdict = "INCOMPLETE_HISTORY"
     elif api_changes and matched == 0 and before_log:
         # every API change of the period predates the journal: nothing was actually compared
         verdict = "NOT_VERIFIABLE_BEFORE_JOURNAL"
     else:
         verdict = "ALL_API_CHANGES_LOGGED"
-    coverage_note = None
+    notes = []
+    if truncated:
+        notes.append(f"Google returned more than {MAX_VERIFY_ROWS} changes for {days} day(s); only the oldest {MAX_VERIFY_ROWS} "
+                     f"(up to {covered_until.isoformat() if covered_until else '?'} UTC) were compared. Newer changes were NOT checked: "
+                     f"{len(unchecked_after_truncation)} logged call(s) after that point are listed as unchecked_after_truncation. "
+                     f"Re-run with a smaller days.")
     if before_log:
-        coverage_note = (f"{len(before_log)} of {api_changes} API changes predate the journal ({source}) and could not be checked; "
-                         + ("try source=\"local\" or \"auto\", this machine's file may reach further back." if source == "cloud"
-                            else "no older journal exists."))
+        notes.append(f"{len(before_log)} of {api_changes} API changes predate the journal ({source}) and could not be checked; "
+                     + ("try source=\"local\" or \"auto\", this machine's file may reach further back." if source == "cloud"
+                        else "no older journal exists."))
+    coverage_note = " ".join(notes) or None
     return {
         "source": source,
         **({"source_requested": requested_source} if requested_source != source else {}),
@@ -309,13 +378,19 @@ def verify_changes_logged(days: int = 2, source: str = "local", customer_id: str
         "audit_log_starts_utc": log_start.isoformat() if log_start else None,
         "verdict": verdict,
         "coverage_note": coverage_note,
+        "history_truncated": truncated,
+        "history_rows_read": len(rows),
+        "history_row_limit": MAX_VERIFY_ROWS,
         "api_changes": api_changes,
         "matched_to_log": matched,
         "not_in_log": len(not_in_log),
         "before_log_started": len(before_log),
+        # previews (dry_run=True) of the period: they change nothing, so they are counted here and never reported as missing
+        "dry_run_calls": sum(1 for e in dry_runs if e["_t"] >= window_start),
         "matched_calls": matched_calls,
         "not_in_log_changes": not_in_log,
         "logged_calls_without_account_change": logged_without_change,
+        "unchecked_after_truncation": unchecked_after_truncation,
         # change_event lags behind the API by a few minutes; re-run later to match these
         "pending_in_change_history": pending_in_change_history,
         "changes_by_other_clients": other_clients,

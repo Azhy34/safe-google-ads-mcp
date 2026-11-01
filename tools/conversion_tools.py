@@ -7,7 +7,6 @@ from typing import List, Optional
 # Add root of google-ads to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from google.api_core import protobuf_helpers
 
 from core.client import get_ads_client
 from core.config import CUSTOMER_ID
@@ -122,20 +121,20 @@ def check_enhanced_conversions_status(customer_id: str = CUSTOMER_ID) -> Enhance
         findings.append(f"📌 {ad}")
         
     if not terms_accepted:
-        findings.append("⚠️ Customer Data Terms (Условия в отношении данных клиентов) не приняты в Google Ads. Для работы Enhanced Conversions требуется подтвердить условия в настройках отслеживания-конверсий.")
+        findings.append("⚠️ Customer Data Terms are not accepted in Google Ads. Enhanced Conversions needs them accepted in the conversion tracking settings.")
     if not ec_enabled and enablement_setting_val == "NOT_CONFIGURED":
-        findings.append("ℹ️ Enhanced Conversions (Расширенное отслеживание конверсий) не активировано на уровне аккаунта. Рекомендуется включить для повышения качества атрибуции заказов.")
+        findings.append("ℹ️ Enhanced Conversions is not active at account level. Turn it on to improve order attribution.")
     elif ec_enabled:
-        findings.append("✅ Enhanced Conversions активировано на уровне аккаунта.")
+        findings.append("✅ Enhanced Conversions is active at account level.")
         
     if not primary_actions:
-        findings.append("⚠️ ВНИМАНИЕ: Нет ни одной основной (Primary) конверсии для оптимизации ставок (все действия вторичные). Кампании со стратегией Target Spend / Maximize Clicks не смогут учитывать конверсии как цель.")
+        findings.append("⚠️ WARNING: no Primary conversion action for bid optimisation (every action is Secondary). Campaigns on Target Spend / Maximize Clicks cannot use conversions as a goal.")
     else:
         primary_names = ", ".join(f"'{a.name}' ({a.category})" for a in primary_actions)
-        findings.append(f"✅ Найдено {len(primary_actions)} основных действий для назначения ставок: {primary_names}.")
+        findings.append(f"✅ Found {len(primary_actions)} Primary actions used for bidding: {primary_names}.")
         
     if secondary_actions:
-        findings.append(f"ℹ️ Найдено {len(secondary_actions)} вторичных (наблюдательных) конверсий.")
+        findings.append(f"ℹ️ Found {len(secondary_actions)} Secondary (observation) conversions.")
         
     return EnhancedConversionsStatusResponse(
         customer_id=customer_id,
@@ -356,21 +355,37 @@ def set_conversion_action_goal(req: SetConversionActionGoalRequest, customer_id:
     ca = operation.update
     ca.resource_name = ca_service.conversion_action_path(customer_id, req.conversion_action_id)
     ca.primary_for_goal = req.primary_for_goal
+    # The mask names its fields by hand: field_mask(None, ...) leaves out a field set to its default, so
+    # primary_for_goal=False went to Google as an update of nothing and came back "successful" (30.10.2026).
+    paths = ["primary_for_goal"]
     if req.status:
         ca.status = getattr(client.enums.ConversionActionStatusEnum, req.status.upper())
+        paths.append("status")
     if req.include_in_conversions_metric is not None:
         ca.include_in_conversions_metric = req.include_in_conversions_metric
-    
-    operation.update_mask.CopyFrom(protobuf_helpers.field_mask(None, ca._pb))
+        paths.append("include_in_conversions_metric")
+    operation.update_mask.paths.extend(paths)
     res = ca_service.mutate_conversion_actions(customer_id=customer_id, operations=[operation])
     updated_resource = res.results[0].resource_name
-    
-    status_label = "PRIMARY (used for bidding optimization)" if req.primary_for_goal else "SECONDARY (observation only)"
+
+    # Read the action back and answer with what Google holds, not with what was asked for.
+    ga_service = client.get_service("GoogleAdsService")
+    rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT conversion_action.primary_for_goal, conversion_action.status
+        FROM conversion_action
+        WHERE conversion_action.id = {int(req.conversion_action_id)}
+    """))
+    if not rows or rows[0].conversion_action.primary_for_goal != req.primary_for_goal:
+        raise RuntimeError(f"NOT_APPLIED: conversion action {req.conversion_action_id} still has primary_for_goal="
+                           f"{rows[0].conversion_action.primary_for_goal if rows else 'unknown'} after the update")
+    actual = rows[0].conversion_action
+
+    status_label = "PRIMARY (used for bidding optimization)" if actual.primary_for_goal else "SECONDARY (observation only)"
     return ConversionActionGoalUpdateResponse(
         customer_id=customer_id,
         conversion_action_id=req.conversion_action_id,
         resource_name=updated_resource,
-        primary_for_goal=req.primary_for_goal,
-        status=req.status or "UNCHANGED",
-        message=f"Conversion action {req.conversion_action_id} successfully updated to {status_label}."
+        primary_for_goal=actual.primary_for_goal,
+        status=actual.status.name,
+        message=f"Conversion action {req.conversion_action_id} is now {status_label} (read back from Google)."
     )

@@ -75,10 +75,10 @@ def get_demand_gen_currency_floor(currency_code: str = "EUR", customer_id: str =
         break
         
     if record:
-        notes.append(f"Минимальный дневной бюджет Demand Gen для валюты {code}: {record.demand_gen_budget_floor_units:.2f} {record.currency_symbol or code} ({record.demand_gen_budget_floor_micros} micros).")
-        notes.append("Кампании Demand Gen с бюджетом ниже этого порога будут отклонены Google Ads API при мутации.")
+        notes.append(f"Minimum Demand Gen daily budget for currency {code}: {record.demand_gen_budget_floor_units:.2f} {record.currency_symbol or code} ({record.demand_gen_budget_floor_micros} micros).")
+        notes.append("Demand Gen campaigns with a budget below this floor are rejected by the Google Ads API on mutation.")
         if code == "EUR":
-            notes.append("Для аккаунта E-Commerce (валюта EUR) минимальный порог составляет 5.00 EUR/день.")
+            notes.append("For an account in EUR the minimum is 5.00 EUR/day.")
         return DemandGenCurrencyFloorResponse(
             requested_currency=code,
             currency_record=record,
@@ -90,5 +90,5 @@ def get_demand_gen_currency_floor(currency_code: str = "EUR", customer_id: str =
             requested_currency=code,
             currency_record=None,
             is_supported=False,
-            notes=[f"Валюта '{code}' не найдена в ресурсе currency_constant Google Ads API."]
+            notes=[f"Currency '{code}' was not found in the Google Ads API currency_constant resource."]
         )

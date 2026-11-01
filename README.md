@@ -1,5 +1,5 @@
 # 🛡️ Safe Google Ads FastMCP Server
-> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **54 purpose-built tools**, and **W3C distributed tracing**.
+> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **59 purpose-built tools**, and **W3C distributed tracing**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -132,20 +132,20 @@ Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
 
 ---
 
-## 🧰 54 Custom FastMCP Tools Catalog
+## 🧰 59 Custom FastMCP Tools Catalog
 
 The tools mirror Google Ads operational hierarchy, split into granular objects and transactional Smart Facades:
 
 | Operational Level | Key MCP Tools | Responsibilities |
 |---|---|---|
 | **🚦 Gate & Health** | `preflight_log_check`, `analyze_tool_health` | Mandatory pre-flight lock; anomaly & error spike audit. |
-| **📢 Campaigns & Bids** | `create_search_campaign`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. |
-| **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, cross-group collision fixer. |
+| **📢 Campaigns & Bids** | `create_search_campaign`, `create_shopping_campaign`, `set_campaign_location`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. Shopping campaigns on the Merchant Center feed (always paused, dry run first) and country on/off inside an existing campaign (never the last one). |
+| **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `set_ad_group_status`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, cross-group collision fixer. Guarded status switch for a whole ad group (never the last enabled one, never a half-built one). |
 | **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa`, `set_ad_status` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, Dynamic Keyword Insertion (DKI), in-place mutation via `AdService.mutate_ads`, and status toggles with last-active ad safeguards. |
-| **🧩 Google Assets** | `create_price_asset`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, Sitelinks, Callouts, Structured Snippets with Google approved headers, and asset performance labeling. |
+| **🧩 Google Assets** | `create_price_asset`, `create_image_asset`, `get_assets_associations`, `get_campaign_images`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, Sitelinks, Callouts, Structured Snippets with Google approved headers, and asset performance labeling. Own-site images cropped to 1.91:1 / 1:1 and linked per ad group as `AD_IMAGE`; filtered reads of what a campaign or ad group shows. |
 | **🧹 Negative Shields** | `apply_negative_shield`, `sync_shared_negative_list`, `mine_search_terms_and_harvest_negatives`, `add_negative_keywords`, `remove_negative_keyword` | E-commerce waste harvesting, multi-country negative keyword sets, and atomic shared negative list sync. |
 | **🎯 Conversions & Tracking** | `check_enhanced_conversions_status`, `set_conversion_action_goal`, `upload_click_conversion` | Enhanced Conversions audit (Customer Data Terms, DMA compliance), Primary/Secondary goal steering for Smart Bidding, and hashed offline conversion upload. |
-| **💳 Billing & Merchant Link** | `get_google_ads_invoices`, `check_merchant_center_link`, `audit_geo_physical_locations`, `get_demand_gen_currency_floor` | Official PDF invoices retrieval, Merchant Center product link audits, physical geo leakage discovery, and currency budget floors. |
+| **💳 Billing & Merchant Link** | `get_google_ads_invoices`, `check_merchant_center_link`, `check_shopping_readiness`, `audit_geo_physical_locations`, `get_demand_gen_currency_floor` | Official PDF invoices retrieval, Merchant Center product link audits, physical geo leakage discovery, and currency budget floors. Two-sided Shopping readiness (Ads + Merchant Center). |
 | **📈 Analytics & GA4** | `get_daily_performance`, `get_impression_share_loss`, `search_keyword_ideas` | Keyword Planner discovery, Search Impression Share loss tracking, and spend vs GA4 dwell-time metrics. |
 | **🔭 Observability** | `get_cloud_logs`, `get_cloud_trace`, `verify_changes_logged`, `evaluate_agent_process` | Cloud Logging inspection, W3C trace breakdown, and process evals. |
 
@@ -163,6 +163,9 @@ While MCP tools provide the **execution layer** (the hands), these bundled Agent
 | **🏢 Hub & Spoke Ad Groups** | [`skills/google-ads-hub-and-spoke-adgroups/`](skills/google-ads-hub-and-spoke-adgroups/SKILL.md) | Structuring consolidated Search campaigns into focused Hub & Spoke ad groups with dedicated category landings. |
 | **🎯 Conversion Tracking & Goals** | [`skills/google-ads-conversion-tracking/`](skills/google-ads-conversion-tracking/SKILL.md) | Enhanced Conversions audit, steering Smart Bidding via Primary/Secondary goals, and offline conversion uploads. |
 | **🔍 Search Terms & GA4 Miner** | [`skills/google-ads-search-terms-miner/`](skills/google-ads-search-terms-miner/SKILL.md) | Cross-referencing ad spend with GA4 on-site engagement to harvest negative keywords and eliminate budget leaks. |
+| **🛒 Shopping Campaigns** | [`skills/google-ads-shopping-campaigns/`](skills/google-ads-shopping-campaigns/SKILL.md) | Feed-based Standard Shopping: readiness on both sides, deliberate product choice, dry run, creation always paused, verification. |
+| **🖼️ Image Assets** | [`skills/google-ads-image-assets/`](skills/google-ads-image-assets/SKILL.md) | Own-site images per ad group: dry-run the crop, create once, link as `AD_IMAGE`, read back with narrow filters. |
+| **🌍 Geo Targeting** | [`skills/google-ads-geo-targeting/`](skills/google-ads-geo-targeting/SKILL.md) | Targeting overview, budget-leak audit, country on/off without ever leaving a campaign with no location. |
 | **🎛️ FastMCP Manager & Orchestrator** | [`skills/google-ads-mcp-manager/`](skills/google-ads-mcp-manager/SKILL.md) | Master multi-level orchestrator: 5-stage lifecycle, 4 account invariants, tool extension protocol, and watchdog SOP rules. |
 
 ---
@@ -182,13 +185,21 @@ Copy the template and provide your Google Ads developer tokens:
 cp .env.example .env
 ```
 
-### 3. Test in Official MCP Inspector
+### 3. Set your business policy
+The code carries no account, coupon, host or campaign name: those are **data** in a policy file (neutral defaults ship in `config/policy.json`).
+Tools that need an identity or an allowed host refuse until you set it:
+```bash
+cp config/policy.json config/policy.local.json    # git-ignored; edit it: accounts, URL rules, allowed hosts, ...
+```
+See [docs/POLICY.md](docs/POLICY.md) for every key.
+
+### 4. Test in Official MCP Inspector
 You can inspect schemas and test tools interactively without spending LLM tokens:
 ```bash
 npx @modelcontextprotocol/inspector --web --config .mcp.json
 ```
 
-### 4. Connect to Claude Code / Desktop
+### 5. Connect to Claude Code / Desktop
 Add the server entry to your client configuration:
 ```json
 {
@@ -201,6 +212,25 @@ Add the server entry to your client configuration:
   }
 }
 ```
+
+### 6. Run the offline test suite
+```bash
+python -m unittest discover -s tests
+```
+The suite uses a fictional advertiser (`tests/policy_test.json`) and never touches the network or your policy.
+
+---
+
+## 🏢 Business Policy: one codebase, your rules
+
+Everything that belongs to *your* business sits in `config/policy.local.json` (or the file named by `MCP_POLICY_FILE`): your
+accounts, which hosts must carry a coupon and which must not, the words that never appear in your ads, the hosts your sitelinks
+and images may use, your Shopping campaign prefix, the countries you deliver to. A rule broken in a request is refused by the
+shield (`REQUEST_REJECTED`) before any call to Google. See [docs/POLICY.md](docs/POLICY.md).
+
+## 📝 Changelog
+See [CHANGELOG.md](CHANGELOG.md): **1.1.0** adds `set_ad_group_status`, `set_campaign_location`, `create_image_asset`,
+`create_shopping_campaign` and `check_shopping_readiness` (59 tools), the policy layer and three skills.
 
 ---
 

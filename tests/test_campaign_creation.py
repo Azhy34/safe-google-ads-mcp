@@ -13,6 +13,8 @@ from pydantic import ValidationError
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import error_shield, cloud_sink
 from shield.error_shield import build_request
@@ -51,10 +53,10 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
 
     def test_valid_request_with_defaults(self):
         req = CreateSearchCampaignRequest(
-            name="E-Commerce Search DE+AT - Category",
-            ad_group_name="Organic Cotton Hoodie - Landing Category"
+            name="ExampleShop Search DE - Site Alpha",
+            ad_group_name="Fototapete Wald - Landing Category"
         )
-        self.assertEqual(req.name, "E-Commerce Search DE+AT - Category")
+        self.assertEqual(req.name, "ExampleShop Search DE - Site Alpha")
         self.assertEqual(req.budget_eur, 3.0)
         self.assertEqual(req.cpc_ceiling_eur, 0.55)
         self.assertEqual(req.status, "PAUSED")
@@ -64,10 +66,10 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
 
     def test_custom_language_ab_test_request(self):
         req = CreateSearchCampaignRequest(
-            name="E-Commerce Search DE+AT - Category EN",
-            ad_group_name="Woodland Wallpaper - Expats",
+            name="ExampleShop Search DE - Site Alpha EN Expat",
+            ad_group_name="Alpha Wallpaper - Expats",
             language_constants=[1001, 1000],
-            keywords=["[woodland wallpaper]", "\"nursery wallpaper\""]
+            keywords=["[alpha wallpaper]", "\"nursery wallpaper\""]
         )
         self.assertEqual(req.language_constants, [1001, 1000])
         self.assertEqual(len(req.keywords), 2)
@@ -97,7 +99,7 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
         mock_budget_service = mock.MagicMock()
         mock_budget_res = mock.MagicMock()
         mock_budget_item = mock.MagicMock()
-        mock_budget_item.resource_name = "customers/1234567890/campaignBudgets/999111"
+        mock_budget_item.resource_name = "customers/1112223334/campaignBudgets/999111"
         mock_budget_res.results = [mock_budget_item]
         mock_budget_service.mutate_campaign_budgets.return_value = mock_budget_res
 
@@ -105,7 +107,7 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
         mock_campaign_service = mock.MagicMock()
         mock_campaign_res = mock.MagicMock()
         mock_campaign_item = mock.MagicMock()
-        mock_campaign_item.resource_name = "customers/1234567890/campaigns/999222"
+        mock_campaign_item.resource_name = "customers/1112223334/campaigns/999222"
         mock_campaign_res.results = [mock_campaign_item]
         mock_campaign_service.mutate_campaigns.return_value = mock_campaign_res
 
@@ -116,7 +118,7 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
         mock_ag_service = mock.MagicMock()
         mock_ag_res = mock.MagicMock()
         mock_ag_item = mock.MagicMock()
-        mock_ag_item.resource_name = "customers/1234567890/adGroups/999333"
+        mock_ag_item.resource_name = "customers/1112223334/adGroups/999333"
         mock_ag_res.results = [mock_ag_item]
         mock_ag_service.mutate_ad_groups.return_value = mock_ag_res
 
@@ -136,8 +138,8 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
         mock_client.get_service.side_effect = get_service_side_effect
 
         req = CreateSearchCampaignRequest(
-            name="E-Commerce Search DE+AT - Category",
-            ad_group_name="Organic Cotton Hoodie - Landing Category",
+            name="ExampleShop Search DE - Site Alpha",
+            ad_group_name="Fototapete Wald - Landing Category",
             budget_eur=3.0,
             cpc_ceiling_eur=0.55,
             status="PAUSED",

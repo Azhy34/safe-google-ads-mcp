@@ -24,6 +24,10 @@ from .telemetry import (
     end_api_call_capture,
     captured_api_calls,
     current_api_calls,
+    start_call_extras,
+    end_call_extras,
+    captured_merchant_calls,
+    captured_journal_notes,
     current_tool,
     SERVICE_CONTEXT,
     REPORTED_ERROR_TYPE,
@@ -189,14 +193,14 @@ def severity_for(function: str, action_type: str, success: bool, error_code: Opt
     return "WARNING"
 
 MUTATION_FUNCTIONS = {
-    "create_search_campaign", "create_ad_group",
+    "create_search_campaign", "create_shopping_campaign", "update_campaign_location", "create_ad_group",
     "update_campaign_status", "update_campaign_budget", "step_campaign_cpc_ceiling",
-    "update_ad_group_bid", "deploy_golden_rsa", "link_asset_to_entity",
+    "update_ad_group_bid", "deploy_golden_rsa", "update_ad_status", "link_asset_to_entity",
     "unlink_asset_from_entity", "create_price_asset", "sync_price_extension", "create_sitelink_assets",
-    "create_callout_assets", "create_structured_snippet_asset",
+    "create_callout_assets", "create_structured_snippet_asset", "create_image_asset",
     "apply_negative_shield", "add_negative_keywords", "sync_shared_negative_list",
-    "auto_fix_collisions_and_dupes", "update_keyword_status", "remove_negative_keyword",
-    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords", "update_ad_status",
+    "auto_fix_collisions_and_dupes", "update_keyword_status", "update_ad_group_status", "remove_negative_keyword",
+    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords",
 }
 
 
@@ -314,15 +318,18 @@ def handle_google_ads_errors(func):
             if parent_span:
                 base_log["parent_span_id"] = parent_span
 
-            # A nested call shares the API-call list of the outer one and reads only its own part of it
+            # A nested call shares the API-call lists of the outer one and reads only its own part of them
             nested = current_api_calls.get() is not None
             calls_from = len(captured_api_calls()) if nested else 0
+            merchant_from = len(captured_merchant_calls()) if nested else 0
             api_token = None if nested else start_api_call_capture()
+            extras_tokens = None if nested else start_call_extras()
             try:
-                return _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from)
+                return _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from, merchant_from)
             finally:
                 if api_token is not None:
                     end_api_call_capture(api_token)
+                    end_call_extras(extras_tokens)
                 cloud_sink.finish_span(span, base_log)
                 reset_trace_context(trace_tokens)
 
@@ -382,11 +389,23 @@ def _refuse_until_preflight(refusal, start, base_log, trace_id, span_id):
         telemetry=Telemetry(latency_ms=latency_ms, trace_id=trace_id, span_id=span_id)
     )
 
-def _note_api_calls(base_log: Dict[str, Any], calls: List[Dict[str, Any]], latency_ms: float) -> Optional[str]:
+def _note_api_calls(base_log: Dict[str, Any], calls: List[Dict[str, Any]], latency_ms: float,
+                    merchant_calls: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
     """
     Writes what the Google Ads API calls of this tool call did: count, time (and the rest of the call outside the API),
-    failures, retries, request-ids. Returns the last request-id (the one for Google support).
+    failures, retries, request-ids; the same for the Merchant API requests (`merchant_api`), and the notes the tool left
+    for its journal entry (a read tool's verdict). Returns the last request-id (the one for Google support).
     """
+    merchant_calls = merchant_calls or []
+    merchant_ms = round(sum(c["ms"] for c in merchant_calls), 1)
+    if merchant_calls:
+        base_log["merchant_api"] = {
+            "calls": len(merchant_calls),
+            "ms": merchant_ms,
+            "failed": sum(1 for c in merchant_calls if c["status"] != "OK"),
+            "methods": sorted({c["method"] for c in merchant_calls}),
+        }
+    base_log.update(captured_journal_notes())
     if not calls:
         return None
     api_ms = round(sum(c["ms"] for c in calls), 1)
@@ -394,7 +413,7 @@ def _note_api_calls(base_log: Dict[str, Any], calls: List[Dict[str, Any]], laten
         "calls": len(calls),
         "ms": api_ms,
         # our code, journal reads, the MCP itself: when a call is slow, this says whether Google was the slow part
-        "other_ms": round(max(latency_ms - api_ms, 0.0), 1),
+        "other_ms": round(max(latency_ms - api_ms - merchant_ms, 0.0), 1),
         "failed": sum(1 for c in calls if c["status"] != "OK"),
         "retried": sum(1 for c in calls if c["attempt"] > 1),
         "methods": sorted({c["method"] for c in calls}),
@@ -430,7 +449,7 @@ def _grpc_failure(e: grpc.RpcError):
                 f"Google Ads OAuth refresh failed — re-issue GOOGLE_ADS_REFRESH_TOKEN in .env ({details[:200]})", "CRITICAL")
     return f"grpc.{status}", (details or str(e))[:MAX_LOGGED_ERROR_MESSAGE_CHARS], "ERROR"
 
-def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0):
+def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0, merchant_from=0):
     refusal = preflight.refusal_for(base_log["function"])
     if refusal:
         return _refuse_until_preflight(refusal, start, base_log, trace_id, span_id)
@@ -439,10 +458,13 @@ def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0):
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return latency_ms, "HEALTHY" if latency_ms <= 2500.0 else "DEGRADED"
 
+    def merchant_calls():
+        return captured_merchant_calls()[merchant_from:]
+
     try:
         res = func(*args, **kwargs)
         latency_ms, sla_status = elapsed()
-        request_id = _note_api_calls(base_log, captured_api_calls()[calls_from:], latency_ms)
+        request_id = _note_api_calls(base_log, captured_api_calls()[calls_from:], latency_ms, merchant_calls())
 
         result = res if isinstance(res, ServiceResult) else ServiceResult(
             success=True,
@@ -478,7 +500,7 @@ def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0):
     except GoogleAdsException as ex:
         latency_ms, sla_status = elapsed()
         calls = captured_api_calls()[calls_from:]
-        noted_id = _note_api_calls(base_log, calls, latency_ms)
+        noted_id = _note_api_calls(base_log, calls, latency_ms, merchant_calls())
         parsed = parse_google_ads_exception(ex, latency_ms)
         parsed.telemetry.trace_id = trace_id
         parsed.telemetry.span_id = span_id
@@ -510,7 +532,7 @@ def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0):
         # Not a bug of ours: Google's side (INTERNAL, quota, unavailable) or the auth plugin
         latency_ms, sla_status = elapsed()
         calls = captured_api_calls()[calls_from:]
-        request_id = _note_api_calls(base_log, calls, latency_ms)
+        request_id = _note_api_calls(base_log, calls, latency_ms, merchant_calls())
         code, message, severity = _grpc_failure(e)
         base_log.update({
             "severity": severity,
@@ -533,7 +555,7 @@ def _run(func, args, kwargs, start, base_log, trace_id, span_id, calls_from=0):
 
     except Exception as e:
         latency_ms, sla_status = elapsed()
-        _note_api_calls(base_log, captured_api_calls()[calls_from:], latency_ms)
+        _note_api_calls(base_log, captured_api_calls()[calls_from:], latency_ms, merchant_calls())
         is_bug = not isinstance(e, RefreshError)
         if isinstance(e, RefreshError):
             # Revoked or expired OAuth refresh token: every call fails until it is re-issued

@@ -13,30 +13,35 @@ from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_googl
 from shield.models_asset import (
     GoogleAssetRecord, ImageAssetData, SitelinkAssetData,
     StructuredSnippetAssetData, CalloutAssetData, PromotionAssetData, PriceAssetData,
-    AssetAssociationRecord, AssetPerformanceRecord, CampaignAssetDiversity,
+    AssetAssociationRecord, AssetAssociationsRequest, AssetPerformanceRecord, CampaignAssetDiversity,
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest,
     SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
     CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
 )
 
 @handle_google_ads_errors
-def list_account_assets(asset_type: str = None, customer_id: str = CUSTOMER_ID) -> List[GoogleAssetRecord]:
+def list_account_assets(asset_type: str = None, customer_id: str = CUSTOMER_ID,
+                        name_contains: str = None) -> List[GoogleAssetRecord]:
     """
     Fetches all base assets in the account (Images, Sitelinks, Structured Snippets, Promotions, Prices).
+    name_contains: only assets whose name contains this text (case-insensitive, matched here, not in GAQL).
+    No row cap: a LIMIT 100 once hid every image past the first hundred.
     """
     client = get_ads_client()
     ga_service = client.get_service("GoogleAdsService")
-    
+
     where_clause = ""
     if asset_type:
         where_clause = f"WHERE asset.type = '{asset_type.upper()}'"
-        
+
     query = f"""
         SELECT
             asset.id,
             asset.name,
             asset.type,
             asset.image_asset.full_size.url,
+            asset.image_asset.full_size.width_pixels,
+            asset.image_asset.full_size.height_pixels,
             asset.image_asset.file_size,
             asset.sitelink_asset.link_text,
             asset.sitelink_asset.description1,
@@ -49,20 +54,23 @@ def list_account_assets(asset_type: str = None, customer_id: str = CUSTOMER_ID) 
             asset.promotion_asset.percent_off
         FROM asset
         {where_clause}
-        LIMIT 100
     """
     response = ga_service.search(customer_id=customer_id, query=query)
-    
+
     results = []
     for row in response:
         a = row.asset
+        if name_contains and name_contains.lower() not in (a.name or "").lower():
+            continue
         type_str = a.type_.name if hasattr(a.type_, "name") else str(a.type_)
-        
+
         img_data = None
         if a.image_asset and a.image_asset.full_size and a.image_asset.full_size.url:
+            w, h = a.image_asset.full_size.width_pixels, a.image_asset.full_size.height_pixels
             img_data = ImageAssetData(
                 url=a.image_asset.full_size.url,
-                file_size=a.image_asset.file_size or None
+                file_size=a.image_asset.file_size or None,
+                aspect_ratio=f"{w}x{h} ({w / h:.2f}:1)" if w and h else None
             )
             
         sitelink_data = None
@@ -105,25 +113,38 @@ def list_account_assets(asset_type: str = None, customer_id: str = CUSTOMER_ID) 
         ))
     return results
 
-# --- TAB 1: СВЯЗИ (ASSOCIATIONS) ---
+# --- TAB 1: ASSOCIATIONS ---
+
+def _image_size(asset) -> Optional[str]:
+    """'1200x628 (1.91:1)' for an image asset (1.00:1 = square), None for any other asset."""
+    image = asset.image_asset
+    if not image or not image.full_size:
+        return None
+    width, height = image.full_size.width_pixels, image.full_size.height_pixels
+    return f"{width}x{height} ({width / height:.2f}:1)" if width and height else None
 
 @handle_google_ads_errors
 def get_assets_associations(
-    level: Optional[str] = None, 
-    field_type: Optional[str] = None, 
-    customer_id: str = CUSTOMER_ID
+    level: Optional[str] = None,
+    field_type: Optional[str] = None,
+    customer_id: str = CUSTOMER_ID,
+    campaign_id: Optional[str] = None,
+    ad_group_id: Optional[str] = None,
 ) -> List[AssetAssociationRecord]:
     """
-    Reproduces Google Ads UI Tab 'Связи' (Associations).
-    Retrieves asset links across Customer (Account), Campaign, and Ad Group levels
-    with full text preview and image CDN URLs.
+    Reproduces Google Ads UI Tab 'Associations': asset links at Customer (Account), Campaign and Ad Group levels
+    with text preview, image CDN URL and image pixel size.
+    campaign_id: that campaign and its ad groups (no account-level rows); ad_group_id: that ad group only.
+    Without either, the answer covers the whole account (150 rows, ~70 000 characters on 31.10.2026): name a campaign or a group.
     """
+    flt = AssetAssociationsRequest(level=level, field_type=field_type, campaign_id=campaign_id, ad_group_id=ad_group_id)
+    level, field_type, campaign_id, ad_group_id = flt.level, flt.field_type, flt.campaign_id, flt.ad_group_id
     client = get_ads_client()
     ga_service = client.get_service("GoogleAdsService")
     results = []
-    
-    # 1. Customer Level (Account-wide, e.g. Business Logo, Price)
-    if not level or level.upper() == "CUSTOMER":
+
+    # 1. Customer Level (Account-wide, e.g. Business Logo, Price): no campaign or group has account-level rows
+    if level in (None, "CUSTOMER") and not (campaign_id or ad_group_id):
         q_cust = """
             SELECT
                 asset.id,
@@ -131,13 +152,15 @@ def get_assets_associations(
                 asset.type,
                 asset.text_asset.text,
                 asset.image_asset.full_size.url,
+                asset.image_asset.full_size.width_pixels,
+                asset.image_asset.full_size.height_pixels,
                 customer_asset.field_type,
                 customer_asset.status
             FROM customer_asset
             WHERE customer_asset.status != 'REMOVED'
         """
         if field_type:
-            q_cust += f" AND customer_asset.field_type = '{field_type.upper()}'"
+            q_cust += f" AND customer_asset.field_type = '{field_type}'"
         for r in ga_service.search(customer_id=customer_id, query=q_cust):
             f_type = r.customer_asset.field_type.name if hasattr(r.customer_asset.field_type, "name") else str(r.customer_asset.field_type)
             a = r.asset
@@ -151,12 +174,13 @@ def get_assets_associations(
                 asset_name=a.name or None,
                 asset_text=txt,
                 asset_image_url=img_url,
+                asset_size=_image_size(a),
                 field_type=f_type,
                 status=r.customer_asset.status.name if hasattr(r.customer_asset.status, "name") else str(r.customer_asset.status)
             ))
 
-    # 2. Campaign Level (Sitelinks, Callouts, Snippets, Promotions)
-    if not level or level.upper() == "CAMPAIGN":
+    # 2. Campaign Level (Sitelinks, Callouts, Snippets, Promotions): an ad group filter leaves only that group's own rows
+    if level in (None, "CAMPAIGN") and not ad_group_id:
         q_camp = """
             SELECT
                 campaign.id,
@@ -169,13 +193,17 @@ def get_assets_associations(
                 asset.callout_asset.callout_text,
                 asset.structured_snippet_asset.header,
                 asset.image_asset.full_size.url,
+                asset.image_asset.full_size.width_pixels,
+                asset.image_asset.full_size.height_pixels,
                 campaign_asset.field_type,
                 campaign_asset.status
             FROM campaign_asset
             WHERE campaign_asset.status != 'REMOVED'
         """
+        if campaign_id:
+            q_camp += f" AND campaign.id = {campaign_id}"
         if field_type:
-            q_camp += f" AND campaign_asset.field_type = '{field_type.upper()}'"
+            q_camp += f" AND campaign_asset.field_type = '{field_type}'"
         for r in ga_service.search(customer_id=customer_id, query=q_camp):
             f_type = r.campaign_asset.field_type.name if hasattr(r.campaign_asset.field_type, "name") else str(r.campaign_asset.field_type)
             a = r.asset
@@ -193,14 +221,17 @@ def get_assets_associations(
                 asset_name=a.name or None,
                 asset_text=txt,
                 asset_image_url=img_url,
+                asset_size=_image_size(a),
                 field_type=f_type,
                 status=r.campaign_asset.status.name if hasattr(r.campaign_asset.status, "name") else str(r.campaign_asset.status)
             ))
 
-    # 3. Ad Group Level (Image assets, group sitelinks)
-    if not level or level.upper() == "AD_GROUP":
+    # 3. Ad Group Level (Image assets, group sitelinks). campaign.id and ad_group.id stand in SELECT as well as in WHERE:
+    # the live API refuses a filter on a field that is not selected (query_error.EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE)
+    if level in (None, "AD_GROUP"):
         q_ag = """
             SELECT
+                campaign.id,
                 ad_group.id,
                 ad_group.name,
                 asset.id,
@@ -209,13 +240,19 @@ def get_assets_associations(
                 asset.text_asset.text,
                 asset.sitelink_asset.link_text,
                 asset.image_asset.full_size.url,
+                asset.image_asset.full_size.width_pixels,
+                asset.image_asset.full_size.height_pixels,
                 ad_group_asset.field_type,
                 ad_group_asset.status
             FROM ad_group_asset
             WHERE ad_group_asset.status != 'REMOVED'
         """
+        if campaign_id:
+            q_ag += f" AND campaign.id = {campaign_id}"
+        if ad_group_id:
+            q_ag += f" AND ad_group.id = {ad_group_id}"
         if field_type:
-            q_ag += f" AND ad_group_asset.field_type = '{field_type.upper()}'"
+            q_ag += f" AND ad_group_asset.field_type = '{field_type}'"
         for r in ga_service.search(customer_id=customer_id, query=q_ag):
             f_type = r.ad_group_asset.field_type.name if hasattr(r.ad_group_asset.field_type, "name") else str(r.ad_group_asset.field_type)
             a = r.asset
@@ -231,13 +268,14 @@ def get_assets_associations(
                 asset_name=a.name or None,
                 asset_text=txt,
                 asset_image_url=img_url,
+                asset_size=_image_size(a),
                 field_type=f_type,
                 status=r.ad_group_asset.status.name if hasattr(r.ad_group_asset.status, "name") else str(r.ad_group_asset.status)
             ))
 
     return results
 
-# --- TAB 2: ЭФФЕКТИВНОСТЬ (PERFORMANCE) ---
+# --- TAB 2: PERFORMANCE ---
 
 @handle_google_ads_errors
 def get_assets_performance(
@@ -246,7 +284,7 @@ def get_assets_performance(
     customer_id: str = CUSTOMER_ID
 ) -> List[AssetPerformanceRecord]:
     """
-    Reproduces Google Ads UI Tab 'Эффективность' (Asset Performance).
+    Reproduces Google Ads UI Tab 'Asset Performance'.
     Retrieves Impressions, Clicks, CTR %, Cost (EUR), and Google AI Performance Label
     across both In-Ad Assets (ad_group_ad_asset_view) and Extensions (campaign_asset, customer_asset).
     """
@@ -418,12 +456,12 @@ def get_assets_performance(
     results.sort(key=lambda x: x.impressions, reverse=True)
     return results
 
-# --- TAB 3: РАЗНООБРАЗИЕ ОБЪЕКТОВ (ASSET DIVERSITY & HEALTH) ---
+# --- TAB 3: ASSET DIVERSITY & HEALTH ---
 
 @handle_google_ads_errors
 def get_assets_diversity(customer_id: str = CUSTOMER_ID) -> List[CampaignAssetDiversity]:
     """
-    Reproduces Google Ads UI Tab 'Разнообразие объектов'.
+    Reproduces Google Ads UI Tab 'Asset Variety & Health'.
     Audits active campaigns to ensure complete asset extension variety:
     Images (min 4), Sitelinks (min 4), Snippets, Callouts, Promotions, Price, Logo.
     """
@@ -517,7 +555,7 @@ def get_assets_diversity(customer_id: str = CUSTOMER_ID) -> List[CampaignAssetDi
         if has_promo:
             score += 10
         else:
-            missing.append("Missing Promotion (PROMO10)")
+            missing.append("Missing Promotion")
             
         if has_cust_price:
             score += 5
@@ -1126,11 +1164,11 @@ def get_campaign_assets_overview(campaign_id: str, customer_id: str = CUSTOMER_I
     # Missing Assets Health Check
     types_present = set(ca.asset.type.name for ca in camp_assets) | set(aa.asset.type.name for aa in ag_assets)
     checklist = {
-        "IMAGE": "Изображения (Square 1:1 & Landscape 1.91:1)",
-        "SITELINK": "Дополнительные ссылки (Sitelinks)",
-        "CALLOUT": "Уточнения (Callouts - Greenguard, Free Shipping)",
-        "PROMOTION": "Промоакция (Promotion PROMO10)",
-        "STRUCTURED_SNIPPET": "Структурированные описания (Snippets)"
+        "IMAGE": "Images (Square 1:1 & Landscape 1.91:1)",
+        "SITELINK": "Sitelinks",
+        "CALLOUT": "Callouts (short selling points, e.g. free shipping)",
+        "PROMOTION": "Promotion",
+        "STRUCTURED_SNIPPET": "Structured snippets"
     }
     output.append("\n" + "-" * 65)
     output.append("📋 ASSET COMPLETION HEALTH CHECK:")

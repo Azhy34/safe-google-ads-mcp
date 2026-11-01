@@ -1,0 +1,82 @@
+{
+  "_comment": "Fictional advertiser used only by the test suite: example-shop.test sells, marketplace.example is a marketplace that needs a coupon.",
+  "account": {
+    "customer_id": "1112223334",
+    "login_customer_id": "5556667778",
+    "merchant_center_id": "1234567890",
+    "feed_label": "EXAMPLE_FEED",
+    "merchant_service_account": "merchant-reader@example-project.iam.gserviceaccount.com",
+    "planner_fallback": {
+      "login_customer_id": "9990001112",
+      "customer_id": "3334445556"
+    }
+  },
+  "ads": {
+    "display_paths": [
+      "Shop",
+      "Sale"
+    ],
+    "default_geo": [
+      2276,
+      2040
+    ],
+    "default_language": [
+      1001
+    ],
+    "priority_campaign_marker": "Priority",
+    "url_rules": [
+      {
+        "host_contains": "marketplace.example",
+        "require_query": "coupon=SAVE10",
+        "message": "MANDATORY SAFEGUARD: marketplace URLs must include ?coupon=SAVE10"
+      },
+      {
+        "host_contains": "example-shop.test",
+        "forbid_query": "coupon=",
+        "forbid_text": [
+          "SAVE10"
+        ],
+        "message": "SITE STANDARDS: example-shop.test sells at direct prices; no coupon in its ads"
+      }
+    ]
+  },
+  "site": {
+    "allowed_hosts": [
+      "example-shop.test",
+      "www.example-shop.test"
+    ],
+    "forbidden_terms": [
+      "marketplace",
+      "save10",
+      "coupon",
+      "toxin-free",
+      "hypoallergenic",
+      "peel & stick"
+    ],
+    "asset_name_prefix": "Shop site"
+  },
+  "shopping": {
+    "name_prefix": "ExampleShop",
+    "default_geo": [
+      2276
+    ],
+    "default_ad_group_name": "All products"
+  },
+  "geo": {
+    "target_country_codes": [
+      "DE",
+      "AT",
+      "FR",
+      "ES",
+      "BE",
+      "NL"
+    ],
+    "allowed_target_ids": [
+      2276,
+      2040
+    ]
+  },
+  "promotion": {
+    "default_code": "SAVE10"
+  }
+}

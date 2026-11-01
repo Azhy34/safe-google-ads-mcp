@@ -67,9 +67,19 @@ deploy_golden_rsa(
 )
 ```
 
-## Step 5: Collision & Quality Shield Audit
+## Step 5: Enable the group only when it is complete
+Create a group PAUSED (or leave it paused) until it has everything it needs, then switch it on with the guarded tool:
+```python
+get_assets_associations(level="AD_GROUP", ad_group_id="<AD_GROUP_ID>", field_type="AD_IMAGE")   # images of its own (see google-ads-image-assets)
+set_ad_group_status(ad_group_id="<AD_GROUP_ID>", enabled=True)
+```
+`set_ad_group_status` refuses to enable a group without an ENABLED positive keyword and an ENABLED RSA, refuses to pause the last
+ENABLED group of a campaign, warns when the group has no images of its own, and answers with the status Google holds afterwards.
+A group that was switched on half-built spends budget on ads nobody finished.
+
+## Step 6: Collision & Quality Shield Audit
 Verify that no cross-group keyword duplicates exist and that the 4-Level Quality Shield scores 100/100:
 ```python
-auto_fix_collisions_and_dupes()
+auto_fix_collisions_and_dupes()      # needs ads.priority_campaign_marker in the policy (docs/POLICY.md)
 audit_campaign_4level_shield(campaign_id="<CAMPAIGN_ID>")
 ```

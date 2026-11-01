@@ -5,13 +5,13 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client
-from core.config import CUSTOMER_ID
+from core.config import CUSTOMER_ID, MERCHANT_CENTER_ID
 from shield.error_shield import handle_google_ads_errors
 from shield.models_merchant import (
     MerchantCenterLinkRecord, MerchantCenterInvitationRecord, MerchantCenterLinkAuditResponse
 )
 
-DEFAULT_MERCHANT_ID = None
+DEFAULT_MERCHANT_ID = MERCHANT_CENTER_ID or None  # account.merchant_center_id of the policy
 
 @handle_google_ads_errors
 def check_merchant_center_link(
@@ -89,18 +89,18 @@ def check_merchant_center_link(
     findings = []
     if target_id:
         if is_linked:
-            findings.append(f"✅ Google Merchant Center ID '{target_id}' успешно связан с аккаунтом Google Ads '{customer_id}' (ProductLink ACTIVE). Фид товаров готов к передаче в кампании.")
+            findings.append(f"✅ Google Merchant Center ID '{target_id}' is linked to Google Ads account '{customer_id}' (ProductLink ACTIVE). The product feed is ready for campaigns.")
         else:
             pending = [inv for inv in invitations if inv.merchant_center_id == target_id and inv.status in ("REQUESTED", "PENDING_APPROVAL")]
             if pending:
-                findings.append(f"⚠️ Для Google Merchant Center ID '{target_id}' обнаружено ожидающее приглашение (Invitation ID: {pending[0].invitation_id}, статус: {pending[0].status}). Требуется подтвердить связь в интерфейсе Google Ads или Merchant Center.")
+                findings.append(f"⚠️ Google Merchant Center ID '{target_id}' has a pending invitation (Invitation ID: {pending[0].invitation_id}, status: {pending[0].status}). Accept the link in Google Ads or Merchant Center.")
             else:
-                findings.append(f"❌ Google Merchant Center ID '{target_id}' НЕ связан с аккаунтом Google Ads '{customer_id}'. Shopping и кампании с фидом не смогут использовать каталог товаров.")
+                findings.append(f"❌ Google Merchant Center ID '{target_id}' is NOT linked to Google Ads account '{customer_id}'. Shopping and feed-based campaigns cannot use the product catalog.")
     else:
         if linked_accounts:
-            findings.append(f"ℹ️ Найдено {len(linked_accounts)} активных связанных аккаунтов ProductLink.")
+            findings.append(f"ℹ️ Found {len(linked_accounts)} active ProductLink accounts.")
         else:
-            findings.append("⚠️ В аккаунте Google Ads нет активных связей ProductLink.")
+            findings.append("⚠️ The Google Ads account has no active ProductLink.")
 
     return MerchantCenterLinkAuditResponse(
         customer_id=customer_id,

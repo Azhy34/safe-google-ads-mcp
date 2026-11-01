@@ -26,7 +26,7 @@ audit_campaign_4level_shield(campaign_id="<CAMPAIGN_ID>")
 The facade inspects four critical levels in a single transaction:
 1. **Level 1 (Bidding Strategy):** Validates strategy alignment (e.g., `TARGET_SPEND` with bounded CPC ceilings).
 2. **Level 2 (Ad Group Structure & Keywords):** Checks keyword match types, status, and duplication across groups.
-3. **Level 3 (Responsive Search Ads):** Verifies that active ads meet the strict 15-headline and 4-description matrix and checks Ad Strength.
+3. **Level 3 (Responsive Search Ads):** Verifies that active ads meet the strict 15-headline and 4-description matrix, checks Ad Strength, and applies the URL rules of the business policy (`ads.url_rules`, for example a required coupon parameter on one host).
 4. **Level 4 (Negative Keywords & Waste Shield):** Verifies attached negative keyword lists to prevent search term cannibalization.
 
 ### Step 2: Interpreting Audit Verdicts
@@ -35,6 +35,15 @@ The facade inspects four critical levels in a single transaction:
   - If missing headlines/descriptions: invoke `google-ads-rsa-writer` skill.
   - If missing negative keywords: invoke `google-ads-search-terms-miner` skill.
   - If bid ceiling suboptimal: invoke `google-ads-bid-ladder` skill.
+
+### Step 2b: Check what each ad group shows (assets)
+The audit scores the campaign. To see what a single ad group actually shows, read its assets with the narrow filters (an unfiltered
+`get_assets_associations()` covers the whole account and is too large for one answer):
+```python
+get_assets_associations(level="AD_GROUP", ad_group_id="<AD_GROUP_ID>", field_type="AD_IMAGE")
+get_assets_associations(level="CAMPAIGN", campaign_id="<CAMPAIGN_ID>", field_type="SITELINK")
+```
+Missing images: `google-ads-image-assets`. A country leak in the clicks: `google-ads-geo-targeting`.
 
 ### Step 3: Observability Verification
 Query the W3C trace breakdown to verify latency and upstream gRPC call count:

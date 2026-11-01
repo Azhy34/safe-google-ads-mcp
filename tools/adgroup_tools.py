@@ -7,9 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client, eur_to_micros
 from core.config import CUSTOMER_ID
-from shield.error_shield import ServiceResult, handle_google_ads_errors
+from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
 from shield.models_adgroup import (
     GoogleAdGroupRecord, AdGroupBidUpdateRequest, AdGroupKeywordRecord, KeywordStatusUpdateRequest,
+    AdGroupStatusUpdateRequest,
     CreateAdGroupRequest, CreateAdGroupResponse, AddKeywordsRequest, AddKeywordsResponse
 )
 
@@ -177,6 +178,105 @@ def update_keyword_status(req: KeywordStatusUpdateRequest, customer_id: str = CU
 
     agc_service.mutate_ad_group_criteria(customer_id=customer_id, operations=[operation])
     return f"Keyword {label}: {old_status} -> {new_status}."
+
+def _group_refusal(code: str, message: str, ad_group_id: str) -> ServiceResult:
+    """A refusal of the shield (not a bug): typed, so the health report does not count it as a crash."""
+    return ServiceResult(
+        success=False,
+        error=ApiError(code=code, message=message, trigger=ad_group_id, field_path=["ad_group_id"]),
+        telemetry=Telemetry(latency_ms=0.0))
+
+@handle_google_ads_errors
+def update_ad_group_status(req: AdGroupStatusUpdateRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Pauses or enables one ad group (the whole group: its keywords and ads keep their own status).
+    Safeguards:
+    - never pauses the last ENABLED ad group of a campaign;
+    - never enables a group without at least one ENABLED positive keyword and one ENABLED Responsive Search Ad
+      (a half-built group spends budget: a group once created enabled and finished only later did exactly that);
+    - warns (does not refuse) when the group has no images of its own (field AD_IMAGE at ad-group level).
+    The update mask names `status` explicitly and the group is read back: the answer is what Google holds, not what was asked.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+    ag_service = client.get_service("AdGroupService")
+
+    rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, campaign.name
+        FROM ad_group
+        WHERE ad_group.id = {req.ad_group_id} AND ad_group.status != 'REMOVED'
+        LIMIT 1
+    """))
+    if not rows:
+        return _group_refusal("AD_GROUP_NOT_FOUND", f"Ad group {req.ad_group_id} does not exist in this account (or was removed).", req.ad_group_id)
+
+    group, campaign = rows[0].ad_group, rows[0].campaign
+    old_status = group.status.name
+    new_status = "ENABLED" if req.enabled else "PAUSED"
+    label = f"'{group.name}' ({req.ad_group_id}) in campaign '{campaign.name}'"
+    if old_status == new_status:
+        return f"Ad group {label} is already {new_status}; nothing changed."
+
+    warnings = []
+    if not req.enabled:
+        enabled_groups = list(ga_service.search(customer_id=customer_id, query=f"""
+            SELECT ad_group.id
+            FROM ad_group
+            WHERE campaign.id = {campaign.id} AND ad_group.status = 'ENABLED'
+        """))
+        if len(enabled_groups) <= 1:
+            return _group_refusal(
+                "LAST_ENABLED_AD_GROUP",
+                f"SAFEGUARD: ad group {label} is the only ENABLED ad group of its campaign; pausing it would leave the campaign without ads. "
+                "Pause the campaign itself (toggle_campaign_status) if that is the intent.", req.ad_group_id)
+    else:
+        # Google refuses a WHERE on ad_group.id unless ad_group.id is also selected (INVALID query on the live account 31.10.2026)
+        keywords = list(ga_service.search(customer_id=customer_id, query=f"""
+            SELECT ad_group.id, ad_group_criterion.criterion_id
+            FROM ad_group_criterion
+            WHERE ad_group.id = {req.ad_group_id} AND ad_group_criterion.type = 'KEYWORD'
+              AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status = 'ENABLED'
+        """))
+        ads = list(ga_service.search(customer_id=customer_id, query=f"""
+            SELECT ad_group.id, ad_group_ad.ad.id
+            FROM ad_group_ad
+            WHERE ad_group.id = {req.ad_group_id} AND ad_group_ad.status = 'ENABLED'
+              AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'
+        """))
+        missing = []
+        if not keywords:
+            missing.append("an ENABLED positive keyword (add_ad_group_keywords / set_keyword_status)")
+        if not ads:
+            missing.append("an ENABLED Responsive Search Ad (deploy_golden_rsa / set_ad_status)")
+        if missing:
+            return _group_refusal(
+                "AD_GROUP_NOT_READY",
+                f"Ad group {label} stays {old_status}: it has no " + " and no ".join(missing) + ".", req.ad_group_id)
+        images = list(ga_service.search(customer_id=customer_id, query=f"""
+            SELECT ad_group.id, ad_group_asset.asset
+            FROM ad_group_asset
+            WHERE ad_group.id = {req.ad_group_id} AND ad_group_asset.field_type = 'AD_IMAGE'
+              AND ad_group_asset.status != 'REMOVED'
+        """))
+        if not images:
+            warnings.append("The group has no images of its own (AD_IMAGE at ad-group level): it will show the campaign's images.")
+
+    operation = client.get_type("AdGroupOperation")
+    update = operation.update
+    update.resource_name = ag_service.ad_group_path(customer_id, req.ad_group_id)
+    update.status = client.enums.AdGroupStatusEnum.ENABLED if req.enabled else client.enums.AdGroupStatusEnum.PAUSED
+    # Named explicitly: a mask built from the object leaves out a field set to its default (lesson of 30.10.2026)
+    operation.update_mask.paths.extend(["status"])
+    ag_service.mutate_ad_groups(customer_id=customer_id, operations=[operation])
+
+    after = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT ad_group.status FROM ad_group WHERE ad_group.id = {req.ad_group_id} LIMIT 1
+    """))
+    actual = after[0].ad_group.status.name if after else "UNKNOWN"
+    if actual != new_status:
+        return _group_refusal(
+            "NOT_APPLIED", f"Google accepted the request but ad group {label} is {actual}, not {new_status}.", req.ad_group_id)
+    return f"Ad group {label}: {old_status} -> {actual}." + "".join(f" WARNING: {w}" for w in warnings)
 
 @handle_google_ads_errors
 def create_ad_group(req: CreateAdGroupRequest, customer_id: str = CUSTOMER_ID) -> CreateAdGroupResponse:

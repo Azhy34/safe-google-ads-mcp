@@ -18,13 +18,15 @@ from pydantic import ValidationError
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import cloud_sink, error_shield
 from shield.error_shield import MUTATION_FUNCTIONS, build_request
 from shield.models_asset import CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest
 from tools.asset_tools import create_callout_assets, create_structured_snippet_asset
 
-CAMPAIGN = "24386071357"
+CAMPAIGN = "2000000001"
 CALLOUTS = ["Kostenloser Versand", "Paste the Wall", "Muster für 16,50 €", "Hergestellt in der EU"]
 SNIPPET_VALUES = ["Wald", "Dschungel", "Weltraum"]
 
@@ -54,7 +56,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["x" * 26, "Muster"])
         with self.assertRaises(ValidationError):
-            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["forbidden_term", "Muster"])
+            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Marketplace Shop", "Muster"])
         with self.assertRaises(ValidationError):
             CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Wald", "wald"])
         with self.assertRaises(ValidationError):
@@ -70,18 +72,18 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["Wald", "Dschungel"])
         with self.assertRaises(ValidationError):
-            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["peel and stick", "Wald", "Meer"])
+            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["peel & stick", "Wald", "Meer"])
         self.assertIn("create_structured_snippet_asset", MUTATION_FUNCTIONS)
 
     def test_a_bad_callout_is_rejected_before_google(self):
         _req, rejected = build_request("create_callout_assets", CreateCalloutAssetsRequest, action_type="MUTATION",
-                                       campaign_id=CAMPAIGN, callouts=["forbidden_term", "Muster"])
+                                       campaign_id=CAMPAIGN, callouts=["save10 gilt", "Muster"])
         self.assertIsNone(_req)
         self.assertIn("REQUEST_REJECTED", rejected)
 
 
 def row_campaign():
-    return SimpleNamespace(campaign=SimpleNamespace(id=int(CAMPAIGN), name="E-Commerce Search DE+AT", status=SimpleNamespace(name="PAUSED")))
+    return SimpleNamespace(campaign=SimpleNamespace(id=int(CAMPAIGN), name="ExampleShop Search DE - Site", status=SimpleNamespace(name="PAUSED")))
 
 
 def row_callout(asset_id, text):
@@ -96,7 +98,7 @@ def row_snippet(asset_id, header, values):
 def row_linked(asset_id, header=None, values=None):
     snippet = SimpleNamespace(header=header, values=values or [])
     return SimpleNamespace(
-        campaign_asset=SimpleNamespace(asset=f"customers/1234567890/assets/{asset_id}"),
+        campaign_asset=SimpleNamespace(asset=f"customers/1112223334/assets/{asset_id}"),
         asset=SimpleNamespace(structured_snippet_asset=snippet),
     )
 
@@ -135,7 +137,7 @@ class FakeAds:
 class CalloutTests(AuditLogCase):
     def create(self, ads, callouts=None):
         with ads.patched():
-            return create_callout_assets(CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=callouts or CALLOUTS), customer_id="1234567890")
+            return create_callout_assets(CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=callouts or CALLOUTS), customer_id="1112223334")
 
     def test_creates_and_links_in_two_requests_with_the_callout_field_type(self):
         ads = FakeAds()
@@ -179,7 +181,7 @@ class SnippetTests(AuditLogCase):
         with ads.patched():
             return create_structured_snippet_asset(
                 CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header=header, values=values or SNIPPET_VALUES),
-                customer_id="1234567890")
+                customer_id="1112223334")
 
     def test_creates_one_snippet_and_links_it(self):
         ads = FakeAds()

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client
-from core.config import CUSTOMER_ID
+from core.config import CUSTOMER_ID, PLANNER_FALLBACK_CUSTOMER_ID, PLANNER_FALLBACK_LOGIN_ID
 from shield.error_shield import handle_google_ads_errors
 from shield.models_keyword import (
     COUNTRIES, KeywordVolumesRequest, KeywordVolumesReport, CountryVolumes, KeywordVolume, MonthVolume,
@@ -20,8 +20,9 @@ from shield.models_keyword import (
 
 # Same way out as search_keyword_ideas: without an approved developer token Keyword Planner answers only through
 # the test manager, and the test account has no search volumes
-FALLBACK_LOGIN_ID = "3508202294"
-FALLBACK_CUSTOMER_ID = "3971857500"
+# (account.planner_fallback of the policy; with none configured the error is raised as it is)
+FALLBACK_LOGIN_ID = PLANNER_FALLBACK_LOGIN_ID
+FALLBACK_CUSTOMER_ID = PLANNER_FALLBACK_CUSTOMER_ID
 FALLBACK_ERRORS = ("DEVELOPER_TOKEN_NOT_APPROVED", "USER_PERMISSION_DENIED")
 
 MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
@@ -91,7 +92,7 @@ def keyword_volumes(req: KeywordVolumesRequest) -> KeywordVolumesReport:
         try:
             results = _with_retry(state, req.keywords, geo, language)
         except Exception as e:
-            if state["fallback"] or not any(code in str(e) for code in FALLBACK_ERRORS):
+            if state["fallback"] or not FALLBACK_LOGIN_ID or not any(code in str(e) for code in FALLBACK_ERRORS):
                 raise
             state.update(client=get_ads_client(FALLBACK_LOGIN_ID), customer_id=FALLBACK_CUSTOMER_ID, fallback=True)
             results = _with_retry(state, req.keywords, geo, language)
@@ -101,14 +102,14 @@ def keyword_volumes(req: KeywordVolumesRequest) -> KeywordVolumesReport:
                                                test_account_fallback=state["fallback"], keywords=volumes))
 
         if state["fallback"]:
-            report.verdicts.append(f"⚠️ {country}: Keyword Planner ответил через тестовый аккаунт — объёмов там нет, нули не настоящие.")
+            report.verdicts.append(f"⚠️ {country}: Keyword Planner answered through the test account - it has no volumes, the zeros are not real.")
             continue
         answered = {v.keyword.lower() for v in volumes} | {c.lower() for v in volumes for c in v.close_variants}
         no_data = [k for k in req.keywords if k.lower() not in answered] + [v.keyword for v in volumes if not v.avg_monthly]
         if no_data:
-            report.verdicts.append(f"{country}: нет данных или 0 запросов — {', '.join(dict.fromkeys(no_data))}.")
+            report.verdicts.append(f"{country}: no data or 0 searches - {', '.join(dict.fromkeys(no_data))}.")
         top = max(volumes, key=lambda v: v.avg_monthly or 0, default=None)
         if top and top.avg_monthly:
-            report.verdicts.append(f"{country}: больше всего ищут «{top.keyword}» — {top.avg_monthly}/мес, пик {top.peak_month}.")
+            report.verdicts.append(f"{country}: most searched is '{top.keyword}' - {top.avg_monthly}/month, peak {top.peak_month}.")
 
     return report

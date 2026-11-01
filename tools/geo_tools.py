@@ -6,8 +6,9 @@ from typing import Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client
+from core import policy
 from core.config import CUSTOMER_ID
-from shield.error_shield import handle_google_ads_errors
+from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
 from shield.models_geo import (
     GeoPhysicalAuditResponse, CountryLocationTrafficRecord, CampaignGeoLeakRecord
 )
@@ -35,8 +36,8 @@ KNOWN_GEO_CONSTANTS = {
     "2100": ("BG", "Bulgaria")
 }
 
-# E-Commerce active delivery target countries
-TARGET_COUNTRY_CODES = {"DE", "AT", "FR", "ES", "BE", "NL"}
+# Countries the advertiser delivers to (geo.target_country_codes of the policy); every other country counts as a leak
+TARGET_COUNTRY_CODES = set(policy.get("geo.target_country_codes", []))
 
 @handle_google_ads_errors
 def audit_geo_physical_locations(
@@ -46,7 +47,15 @@ def audit_geo_physical_locations(
     """
     Audits physical user locations from user_location_view to detect budget wasted
     on users outside target countries (e.g. clicks from US, TR, IN via 'Presence or Interest' default).
+    The target countries come from geo.target_country_codes of the policy; without them the tool refuses to judge.
     """
+    if not TARGET_COUNTRY_CODES:
+        return ServiceResult(
+            success=False,
+            error=ApiError(code="TARGET_COUNTRIES_NOT_SET",
+                           message="Set geo.target_country_codes in the policy (docs/POLICY.md): without the countries you deliver to, every country would count as a leak.",
+                           trigger="geo.target_country_codes", field_path=["geo.target_country_codes"]),
+            telemetry=Telemetry(latency_ms=0.0))
     client = get_ads_client()
     ga_service = client.get_service("GoogleAdsService")
 
@@ -169,13 +178,13 @@ def audit_geo_physical_locations(
 
     findings = []
     if leak_pct > 0:
-        findings.append(f"⚠️ Обнаружена утечка бюджета: {leaked_eur:.2f} € ({leak_pct}%) потрачено на пользователей вне стран доставки.")
+        findings.append(f"⚠️ Budget leak found: {leaked_eur:.2f} € ({leak_pct}%) was spent on users outside the delivery countries.")
         top_leaks = [f"{c.country_name} ({c.cost_eur} €)" for c in countries_list if c.status == "LEAK"][:3]
         if top_leaks:
-            findings.append(f"Основные страны утечки: {', '.join(top_leaks)}.")
-        findings.append("💡 Рекомендация: в настройках кампаний переключить 'Location options' (Варианты местоположений) с 'Presence or Interest' строго на 'Presence: People in or regularly in your targeted locations'.")
+            findings.append(f"Main leak countries: {', '.join(top_leaks)}.")
+        findings.append("💡 Recommendation: in the campaign settings switch 'Location options' from 'Presence or Interest' to 'Presence: People in or regularly in your targeted locations'.")
     else:
-        findings.append("✅ 100% расходов и кликов приходятся строго на целевые страны доставки (DE, AT, FR, ES, BE, NL). Утечек не обнаружено.")
+        findings.append("✅ 100% of cost and clicks come from the target delivery countries. No leaks found.")
 
     return GeoPhysicalAuditResponse(
         period_days=days,

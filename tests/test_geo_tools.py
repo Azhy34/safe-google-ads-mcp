@@ -7,6 +7,8 @@ from unittest import mock
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import error_shield, cloud_sink
 from shield.models_geo import (
@@ -58,7 +60,7 @@ class TestGeoTools(AuditLogCase):
 
         row_de = mock.MagicMock()
         row_de.campaign.id = 111
-        row_de.campaign.name = "Core High Intent Search"
+        row_de.campaign.name = "ExampleShop Priority"
         row_de.user_location_view.country_criterion_id = 2276  # Germany
         row_de.metrics.impressions = 200
         row_de.metrics.clicks = 10
@@ -84,7 +86,7 @@ class TestGeoTools(AuditLogCase):
         # 1 target row (DE)
         row_de = mock.MagicMock()
         row_de.campaign.id = 111
-        row_de.campaign.name = "Core High Intent Search"
+        row_de.campaign.name = "ExampleShop Priority"
         row_de.user_location_view.country_criterion_id = 2276
         row_de.metrics.impressions = 100
         row_de.metrics.clicks = 5
@@ -94,7 +96,7 @@ class TestGeoTools(AuditLogCase):
         # 1 leak row (US)
         row_us = mock.MagicMock()
         row_us.campaign.id = 111
-        row_us.campaign.name = "Core High Intent Search"
+        row_us.campaign.name = "ExampleShop Priority"
         row_us.user_location_view.country_criterion_id = 2840  # United States
         row_us.metrics.impressions = 50
         row_us.metrics.clicks = 3
@@ -110,7 +112,7 @@ class TestGeoTools(AuditLogCase):
         self.assertEqual(result.data.leaked_spend_eur, 1.50)
         self.assertEqual(result.data.leak_percentage, 37.5)
         self.assertEqual(len(result.data.campaign_leaks), 1)
-        self.assertEqual(result.data.campaign_leaks[0].campaign_name, "Core High Intent Search")
+        self.assertEqual(result.data.campaign_leaks[0].campaign_name, "ExampleShop Priority")
         self.assertIn("United States (US)", result.data.campaign_leaks[0].leaked_countries)
 
 if __name__ == "__main__":

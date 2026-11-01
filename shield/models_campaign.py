@@ -1,6 +1,8 @@
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
+from core import policy
+
 class CampaignBudgetRecord(BaseModel):
     resource_name: Optional[str] = Field(None, description="Resource name of the budget")
     amount_micros: int = Field(..., description="Daily budget in micros (e.g. 3000000 = 3.00 EUR)")
@@ -10,7 +12,7 @@ class CampaignBudgetRecord(BaseModel):
 class GoogleCampaignRecord(BaseModel):
     id: str = Field(..., description="Unique Google Ads Campaign ID")
     resource_name: Optional[str] = Field(None, description="Campaign resource name")
-    name: str = Field(..., description="Campaign name (e.g. E-Commerce Search DE+AT - Woodland)")
+    name: str = Field(..., description="Campaign name (e.g. Brand Search DE - Category Alpha)")
     status: Literal["ENABLED", "PAUSED", "REMOVED"] = Field(..., description="Campaign serving status")
     advertising_channel_type: str = Field(default="SEARCH", description="Channel type: SEARCH, PERFORMANCE_MAX, DISPLAY")
     bidding_strategy_type: str = Field(default="TARGET_SPEND", description="Strategy: TARGET_SPEND, MANUAL_CPC, MAXIMIZE_CONVERSIONS")
@@ -57,16 +59,16 @@ class IdArguments(BaseModel):
     IDs a read tool puts into its GAQL query. Only digits: a name or text in place of an ID used to reach Google as a
     query (query_error.BAD_NUMBER, 05.10.2026) and could change the query itself.
     """
-    campaign_id: Optional[str] = Field(None, pattern=r"^\d{1,20}$", description="Numeric campaign ID, e.g. 24103530881 (get_campaigns lists them)")
-    ad_group_id: Optional[str] = Field(None, pattern=r"^\d{1,20}$", description="Numeric ad group ID, e.g. 201418406040 (get_ad_groups lists them)")
+    campaign_id: Optional[str] = Field(None, pattern=r"^\d{1,20}$", description="Numeric campaign ID, e.g. 1234567890 (get_campaigns lists them)")
+    ad_group_id: Optional[str] = Field(None, pattern=r"^\d{1,20}$", description="Numeric ad group ID, e.g. 1234567890 (get_ad_groups lists them)")
 
 class CreateSearchCampaignRequest(BaseModel):
-    name: str = Field(..., description="Unique campaign name, e.g. E-Commerce Search DE+AT - Category")
+    name: str = Field(..., description="Unique campaign name, e.g. Brand Search DE - Category Alpha")
     budget_eur: float = Field(default=3.0, ge=1.0, le=50.0, description="Daily budget in EUR (1.00 - 50.00)")
     cpc_ceiling_eur: float = Field(default=0.55, ge=0.10, le=3.00, description="Maximize Clicks CPC ceiling in EUR (0.10 - 3.00)")
     status: Literal["PAUSED", "ENABLED"] = Field(default="PAUSED", description="Initial serving status: strictly PAUSED for new site campaigns")
-    geo_target_constants: list[int] = Field(default_factory=lambda: [2276, 2040], description="Targeted geo IDs: 2276=Germany, 2040=Austria")
-    language_constants: list[int] = Field(default_factory=lambda: [1001], description="Targeted language IDs: 1001=German, 1000=English")
+    geo_target_constants: list[int] = Field(default_factory=lambda: list(policy.get("ads.default_geo", [])), min_length=1, description="Targeted geo IDs, e.g. 2276=Germany, 2040=Austria (default: ads.default_geo of the policy)")
+    language_constants: list[int] = Field(default_factory=lambda: list(policy.get("ads.default_language", [])), min_length=1, description="Targeted language IDs, e.g. 1001=German, 1000=English (default: ads.default_language of the policy)")
     ad_group_name: str = Field(..., description="Name for the initial ad group")
     keywords: list[str] = Field(default_factory=list, description="Initial keywords in [exact] or \"phrase\" match syntax")
 

@@ -7,7 +7,8 @@ from google.api_core import protobuf_helpers
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client
-from core.config import CUSTOMER_ID
+from core import policy
+from core.config import CUSTOMER_ID, PLANNER_FALLBACK_CUSTOMER_ID, PLANNER_FALLBACK_LOGIN_ID
 from shield.error_shield import ServiceResult, handle_google_ads_errors
 from shield.models_criterion import (
     SearchTermWasteRecord, ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest,
@@ -227,7 +228,7 @@ def audit_campaign_4level_shield(campaign_id: str, customer_id: str = CUSTOMER_I
     Level 1: Campaign settings & Budget
     Level 1 also checks primary_status and the Maximize Clicks CPC ceiling.
     Level 2: Ad Groups (bids are checked only for MANUAL_CPC campaigns)
-    Level 3: RSA copy (15/4 matrix, PROMO10 promo, Ad Strength notes)
+    Level 3: RSA copy (15/4 matrix, the URL rules of the policy, Ad Strength notes)
     Level 4: Negative Keyword Shield strength
     Returns an objective 0-100% Quality Score.
     """
@@ -309,9 +310,10 @@ def audit_campaign_4level_shield(campaign_id: str, customer_id: str = CUSTOMER_I
             if d_count < 4:
                 score -= (4 - d_count) * 5
                 deductions.append(f"Level 3: RSA #{i} descriptions count {d_count}/4 (Missing {4 - d_count} descriptions)")
-            if not any(u.startswith("https://") for u in urls):
-                score -= 10
-                deductions.append(f"Level 3: RSA #{i} final URL is missing secure HTTPS protocol")
+            for rule in policy.url_rules():
+                if rule.require_query and any(rule.host_contains in u.lower() for u in urls) and not any(rule.require_query in u for u in urls):
+                    score -= 15
+                    deductions.append(f"Level 3: RSA #{i} final URL is missing the mandatory '{rule.require_query}' (policy ads.url_rules, {rule.host_contains})")
             strength = row.ad_group_ad.ad_strength.name
             if strength in ("POOR", "AVERAGE"):
                 notes.append(f"Level 3: RSA #{i} in '{row.ad_group.name}' has Ad Strength {strength}")
@@ -414,9 +416,13 @@ def get_impression_share_loss(days: int = 7, customer_id: str = CUSTOMER_ID) -> 
 @handle_google_ads_errors
 def auto_fix_collisions_and_dupes(customer_id: str = CUSTOMER_ID) -> Dict[str, Any]:
     """
-    Scans active campaigns for duplicate keywords between High Intent and Core/Jungle campaigns,
-    and automatically pauses dupes in Core/Jungle.
+    Scans active campaigns for duplicate keywords between the priority campaign (name contains ads.priority_campaign_marker
+    of the policy) and all other campaigns, and automatically pauses the duplicates in the other campaigns.
     """
+    marker = policy.text("ads.priority_campaign_marker")
+    if not marker:
+        raise ValueError("auto_fix_collisions_and_dupes needs ads.priority_campaign_marker in the policy: the text that "
+                         "marks the names of the priority campaigns whose keywords win (docs/POLICY.md)")
     client = get_ads_client()
     ga = client.get_service("GoogleAdsService")
     agc_service = client.get_service("AdGroupCriterionService")
@@ -441,7 +447,7 @@ def auto_fix_collisions_and_dupes(customer_id: str = CUSTOMER_ID) -> Dict[str, A
         camp_name = r.campaign.name
         rn = r.ad_group_criterion.resource_name
         
-        if "High Intent" in camp_name:
+        if marker in camp_name:
             hi_keys.add(text)
         else:
             core_kw_map.append((text, rn, camp_name, r.ad_group.name))
@@ -515,9 +521,9 @@ def search_keyword_ideas(seeds: List[str], language_id: str = "1001", location_i
         ideas_list = list(ideas)
     except Exception as e:
         err_str = str(e)
-        if "DEVELOPER_TOKEN_NOT_APPROVED" in err_str or "USER_PERMISSION_DENIED" in err_str:
-            fallback_client = get_ads_client("3508202294")
-            request.customer_id = "3971857500"
+        if PLANNER_FALLBACK_LOGIN_ID and ("DEVELOPER_TOKEN_NOT_APPROVED" in err_str or "USER_PERMISSION_DENIED" in err_str):
+            fallback_client = get_ads_client(PLANNER_FALLBACK_LOGIN_ID)
+            request.customer_id = PLANNER_FALLBACK_CUSTOMER_ID
             request.language = fallback_client.get_service("GoogleAdsService").language_constant_path(language_id)
             del request.geo_target_constants[:]
             for loc in location_ids:
@@ -699,19 +705,19 @@ def sync_shared_negative_list(
     # 5. Build audit notes and response
     notes = []
     if is_new:
-        notes.append(f"✅ Создан новый общий список минус-слов '{shared_set_name}' (ID: {shared_set_id}).")
+        notes.append(f"✅ Created a new shared negative keyword list '{shared_set_name}' (ID: {shared_set_id}).")
     else:
-        notes.append(f"ℹ️ Использован существующий общий список минус-слов '{shared_set_name}' (ID: {shared_set_id}).")
+        notes.append(f"ℹ️ Used the existing shared negative keyword list '{shared_set_name}' (ID: {shared_set_id}).")
 
     if added_count > 0:
-        notes.append(f"✅ Добавлено {added_count} новых минус-слов ({match_type_str}).")
+        notes.append(f"✅ Added {added_count} new negative keywords ({match_type_str}).")
     elif req.keywords:
-        notes.append("ℹ️ Все переданные минус-слова уже присутствуют в списке (дубликаты пропущены).")
+        notes.append("ℹ️ All the negative keywords given are already in the list (duplicates skipped).")
 
     if newly_attached:
-        notes.append(f"✅ Список привязан к {len(newly_attached)} кампаниям: {', '.join(newly_attached)}.")
+        notes.append(f"✅ The list is attached to {len(newly_attached)} campaigns: {', '.join(newly_attached)}.")
     if already_attached:
-        notes.append(f"ℹ️ Список уже был привязан к кампаниям: {', '.join(already_attached)}.")
+        notes.append(f"ℹ️ The list was already attached to the campaigns: {', '.join(already_attached)}.")
 
     if is_new and (added_count > 0 or newly_attached):
         action = "CREATED_AND_SYNCED"

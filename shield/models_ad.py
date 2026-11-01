@@ -1,6 +1,8 @@
 import re
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from core import policy
 
 DKI_PATTERN = re.compile(r"\{keyword:([^}]*)\}", re.IGNORECASE)
 
@@ -37,17 +39,22 @@ class DeployGoldenRSARequest(BaseModel):
         pattern=r"^\d+$",
         description="Optional existing RSA Ad ID to update in-place via AdService. If omitted and the Ad Group already has an ENABLED RSA, that existing RSA is updated in-place automatically."
     )
-    final_url: str = Field(..., description="Destination landing URL")
+    final_url: str = Field(..., description="Destination landing URL; the URL rules of the business policy (ads.url_rules) apply to it")
     headlines: List[str] = Field(..., min_length=15, max_length=15, description="MUST contain EXACTLY 15 headlines (<=30 chars each); headlines[0] must equal pinned_h1_dki")
     descriptions: List[str] = Field(..., min_length=4, max_length=4, description="MUST contain EXACTLY 4 descriptions (<=90 chars each)")
     pinned_h1_dki: str = Field(..., description="Headline 1 pinned with Dynamic Keyword Insertion, e.g. {KeyWord:Premium Running Shoes}")
-    path1: Optional[str] = Field(default="Shop", max_length=15, description="Display URL Path 1 (max 15 chars)")
-    path2: Optional[str] = Field(default="Sale", max_length=15, description="Display URL Path 2 (max 15 chars)")
+    path1: Optional[str] = Field(default_factory=lambda: policy.display_paths()[0], max_length=15, description="Display URL Path 1 (max 15 chars)")
+    path2: Optional[str] = Field(default_factory=lambda: policy.display_paths()[1], max_length=15, description="Display URL Path 2 (max 15 chars)")
 
     @field_validator("final_url")
-    def validate_landing_url(cls, v):
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("Landing URL must start with http:// or https://")
+    def validate_url_policy(cls, v):
+        for rule in policy.url_rules():
+            if rule.host_contains not in v.lower():
+                continue
+            if rule.require_query and rule.require_query not in v:
+                raise ValueError(rule.message or f"final_url on {rule.host_contains} must include '{rule.require_query}' (policy ads.url_rules)")
+            if rule.forbid_query and rule.forbid_query in v:
+                raise ValueError(rule.message or f"final_url on {rule.host_contains} must not include '{rule.forbid_query}' (policy ads.url_rules)")
         return v
 
     @field_validator("pinned_h1_dki")
@@ -77,9 +84,18 @@ class DeployGoldenRSARequest(BaseModel):
         # headlines[0] is the slot pinned to HEADLINE_1, so it must be the DKI headline itself
         if self.headlines[0] != self.pinned_h1_dki:
             raise ValueError(f"headlines[0] must equal pinned_h1_dki '{self.pinned_h1_dki}', got '{self.headlines[0]}'")
+        for rule in policy.url_rules():
+            if rule.host_contains not in self.final_url.lower():
+                continue
+            for label, texts in (("headline", self.headlines), ("description", self.descriptions)):
+                for text in texts:
+                    for word in rule.forbid_text:
+                        if word.upper() in text.upper():
+                            raise ValueError(f"{rule.message or 'policy ads.url_rules'}: remove '{word}' from {label} '{text}'")
         return self
 
+
 class AdStatusUpdateRequest(BaseModel):
-    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Parent Ad Group ID")
-    ad_id: str = Field(..., pattern=r"^\d+$", description="Target Ad ID to update status")
-    enabled: bool = Field(..., description="True to enable, False to pause")
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Ad Group ID of the RSA ad")
+    ad_id: str = Field(..., pattern=r"^\d+$", description="RSA Ad ID (from get_campaign_ads)")
+    enabled: bool = Field(..., description="True to ENABLE, False to PAUSE")

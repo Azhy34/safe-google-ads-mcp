@@ -51,7 +51,7 @@ HOST = socket.gethostname()
 SESSION_ID = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(2)}"
 
 def gcp_project() -> str:
-    """GCP project of the online log and traces (azhyshchev); 'local' while cloud logging is not configured.
+    """GCP project of the online log and traces; 'local' while cloud logging is not configured.
     Read on every call: core.config loads .env after this module may already be imported."""
     return os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or "local"
 
@@ -111,6 +111,38 @@ def record_api_call(method: str, ms: float, status: str, request_id: Optional[st
 def captured_api_calls() -> list:
     return list(current_api_calls.get() or [])
 
+# The same for the Merchant API, which is plain HTTP and so invisible to the gRPC interceptor: core/merchant_client.py
+# records each request here, and the journal entry gets a `merchant_api` block next to `google_ads_api`.
+current_merchant_calls: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar("current_merchant_calls", default=None)
+# What a read tool wants in its journal entry (a verdict, why a part was skipped): reads do not log their result, mutations do
+current_journal_notes: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar("current_journal_notes", default=None)
+
+def start_call_extras() -> tuple:
+    """Opens the Merchant API call list and the journal notes of one tool call; hand the tokens to end_call_extras."""
+    return current_merchant_calls.set([]), current_journal_notes.set({})
+
+def end_call_extras(tokens: tuple) -> None:
+    current_merchant_calls.reset(tokens[0])
+    current_journal_notes.reset(tokens[1])
+
+def record_merchant_call(method: str, ms: float, status: str) -> None:
+    """Called by core/merchant_client.py once per HTTP attempt; outside a tool call (no open list) it does nothing."""
+    calls = current_merchant_calls.get()
+    if calls is not None:
+        calls.append({"method": method, "ms": round(ms, 1), "status": status})
+
+def captured_merchant_calls() -> list:
+    return list(current_merchant_calls.get() or [])
+
+def note_journal(**fields: Any) -> None:
+    """Adds fields to the journal entry of the running tool call; None values are dropped. A no-op outside a tool call."""
+    notes = current_journal_notes.get()
+    if notes is not None:
+        notes.update({key: value for key, value in fields.items() if value is not None})
+
+def captured_journal_notes() -> dict:
+    return dict(current_journal_notes.get() or {})
+
 # Optional OpenTelemetry integration (if installed)
 try:
     from opentelemetry import trace
@@ -119,7 +151,9 @@ except ImportError:
     OTEL_AVAILABLE = False
 
 # Zero-Trust DLP Regex Patterns for Google Ads, APIs, and credentials
-GADS_BEARER_REGEX = r'(?i)\b(ya29\.[A-Za-z0-9_-]{50,150})\b'
+# No upper bound and no closing \b: a token minted by service account impersonation (the Merchant API one) is far longer than 150
+# and has a dot after the first letter (ya29.c.<...>)
+GADS_BEARER_REGEX = r'(?i)\b(ya29\.[A-Za-z0-9._-]{50,})'
 GOOGLE_API_KEY_REGEX = r'\bAIzaSy[A-Za-z0-9_-]{33}\b'
 GADS_REFRESH_TOKEN_REGEX = r'(?i)(refresh_token[\'"\s:=]+)([A-Za-z0-9_\-\./]{30,80})'
 GADS_CLIENT_SECRET_REGEX = r'(?i)(client_secret[\'"\s:=]+)([A-Za-z0-9_\-]{20,50})'

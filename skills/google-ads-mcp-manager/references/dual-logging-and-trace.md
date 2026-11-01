@@ -40,3 +40,11 @@ When Google Cloud credentials are configured in `.env`, telemetry is synchronize
    - Root Span: `tools/call <tool_name>` (total execution duration).
    - Child Spans: Direct gRPC service calls to Google Ads API (`GoogleAdsService/Search`, `AdGroupAdService/MutateAdGroupAds`).
    - Detailed span waterfalls can be inspected at any time via `get_cloud_trace(trace_id="...")`.
+
+---
+
+## 3. Merchant API requests
+
+The Merchant API (read-only, used by the Shopping tools) is plain HTTP, so the gRPC interceptor does not see it. `core/merchant_client.py`
+records every request: the journal entry gets a `merchant_api` block next to `google_ads_api`, and Cloud Trace gets child spans named
+`merchant_api.<request>`. `get_cloud_trace` reports `merchant_api_calls` and `merchant_api_ms`, and `own_code_ms` is net of them.

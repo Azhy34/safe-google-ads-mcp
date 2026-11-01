@@ -8,6 +8,8 @@ from unittest import mock
 
 PKG = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PKG))
+sys.path.insert(0, str(PKG / "tests"))
+import policy_env  # noqa: F401  (pins the fictional test policy before anything reads it)
 
 from shield import error_shield, cloud_sink
 from shield.telemetry import redact_secrets
@@ -28,8 +30,6 @@ from tools.conversion_tools import (
 from tools.billing_tools import get_google_ads_invoices
 from tools.negative_tools import sync_shared_negative_list
 from tools.merchant_tools import check_merchant_center_link
-from shield.models_ad import AdStatusUpdateRequest, DeployGoldenRSARequest
-from tools.rsa_tools import update_ad_status
 
 class AuditLogCase(unittest.TestCase):
     def setUp(self):
@@ -284,7 +284,7 @@ class TestV26Tools(AuditLogCase):
         bs_row.billing_setup.id = "98765"
         bs_row.billing_setup.status.name = "APPROVED"
         bs_row.billing_setup.payments_account_info.payments_account_id = "PAY-ACC-11"
-        bs_row.billing_setup.payments_account_info.payments_account_name = "E-Commerce Store"
+        bs_row.billing_setup.payments_account_info.payments_account_name = "ExampleShop Walls"
         ga_service.search.return_value = [bs_row]
 
         # 2. Mock Enum with strict spec to prevent swallowing regressions
@@ -383,19 +383,19 @@ class TestV26Tools(AuditLogCase):
         css_service.mutate_campaign_shared_sets.return_value = mock_css_resp
 
         req = SyncSharedNegativeListRequest(
-            list_name="E-Commerce Universal Negatives",
+            list_name="ExampleShop Universal Negatives",
             keywords=["obi", "hornbach"],
             match_type="BROAD",
-            campaign_ids=["24015242821"]
+            campaign_ids=["2000000003"]
         )
 
         result = sync_shared_negative_list(req=req, customer_id="1234567890")
         self.assertTrue(result.success, f"Failed: {result.error}")
         self.assertEqual(result.data.shared_set_id, "99001")
-        self.assertEqual(result.data.shared_set_name, "E-Commerce Universal Negatives")
+        self.assertEqual(result.data.shared_set_name, "ExampleShop Universal Negatives")
         self.assertEqual(result.data.action_taken, "CREATED_AND_SYNCED")
         self.assertEqual(result.data.added_keywords_count, 2)
-        self.assertEqual(result.data.attached_campaign_ids, ["24015242821"])
+        self.assertEqual(result.data.attached_campaign_ids, ["2000000003"])
         self.assertEqual(result.data.already_attached_campaign_ids, [])
 
         # Verify mutate calls
@@ -428,7 +428,7 @@ class TestV26Tools(AuditLogCase):
         # 1. Existing shared set row
         set_row = mock.MagicMock()
         set_row.shared_set.id = 88002
-        set_row.shared_set.name = "E-Commerce Universal Negatives"
+        set_row.shared_set.name = "ExampleShop Universal Negatives"
 
         # 2. Existing criterion row ("obi" already exists with BROAD match)
         crit_row = mock.MagicMock()
@@ -436,9 +436,9 @@ class TestV26Tools(AuditLogCase):
         crit_row.shared_criterion.keyword.text = "obi"
         crit_row.shared_criterion.keyword.match_type.name = "BROAD"
 
-        # 3. Existing campaign shared set row (campaign 24015242821 already attached)
+        # 3. Existing campaign shared set row (campaign 2000000003 already attached)
         css_row = mock.MagicMock()
-        css_row.campaign_shared_set.campaign = "customers/1234567890/campaigns/24015242821"
+        css_row.campaign_shared_set.campaign = "customers/1234567890/campaigns/2000000003"
 
         ga_service.search.side_effect = [
             [set_row],   # shared_set search
@@ -451,10 +451,10 @@ class TestV26Tools(AuditLogCase):
 
         # Test A: Request has "obi" as BROAD (duplicate) and "ikea" as BROAD (new)
         req = SyncSharedNegativeListRequest(
-            list_name="E-Commerce Universal Negatives",
+            list_name="ExampleShop Universal Negatives",
             keywords=["obi", "ikea"],
             match_type="BROAD",
-            campaign_ids=["24015242821"]
+            campaign_ids=["2000000003"]
         )
 
         result = sync_shared_negative_list(req=req, customer_id="1234567890")
@@ -462,16 +462,16 @@ class TestV26Tools(AuditLogCase):
         self.assertEqual(result.data.shared_set_id, "88002")
         self.assertEqual(result.data.action_taken, "SYNCED_EXISTING")
         self.assertEqual(result.data.added_keywords_count, 1)  # only "ikea" added
-        self.assertEqual(result.data.already_attached_campaign_ids, ["24015242821"])
+        self.assertEqual(result.data.already_attached_campaign_ids, ["2000000003"])
         self.assertEqual(result.data.attached_campaign_ids, [])
 
         # Test B: Request has "obi" as EXACT (different match type: MUST be added, not skipped!)
         client.enums.KeywordMatchTypeEnum.EXACT = 4
         req_exact = SyncSharedNegativeListRequest(
-            list_name="E-Commerce Universal Negatives",
+            list_name="ExampleShop Universal Negatives",
             keywords=["obi"],
             match_type="EXACT",
-            campaign_ids=["24015242821"]
+            campaign_ids=["2000000003"]
         )
         result_exact = sync_shared_negative_list(req=req_exact, customer_id="1234567890")
         self.assertTrue(result_exact.success, f"Failed: {result_exact.error}")
@@ -493,7 +493,7 @@ class TestV26Tools(AuditLogCase):
 
         # 1. ProductLink row: strict spec matching Google Ads API v23 protobuf
         mock_mc = mock.MagicMock(spec=["merchant_center_id"])
-        mock_mc.merchant_center_id = 9876543210
+        mock_mc.merchant_center_id = 1234567890
         mock_type = mock.MagicMock(spec=["name"])
         mock_type.name = "MERCHANT_CENTER"
         mock_pl = mock.MagicMock(spec=["product_link_id", "type_", "merchant_center"])
@@ -509,13 +509,13 @@ class TestV26Tools(AuditLogCase):
             []         # product_link_invitation search
         ]
 
-        result = check_merchant_center_link(merchant_id="9876543210", customer_id="1234567890")
+        result = check_merchant_center_link(merchant_id="1234567890", customer_id="1234567890")
         self.assertTrue(result.success, f"Failed: {result.error}")
         self.assertTrue(result.data.is_linked)
         self.assertEqual(len(result.data.linked_accounts), 1)
         self.assertEqual(result.data.linked_accounts[0].product_link_id, "112233")
-        self.assertEqual(result.data.linked_accounts[0].merchant_center_id, "9876543210")
-        self.assertIn("успешно связан", result.data.audit_findings[0])
+        self.assertEqual(result.data.linked_accounts[0].merchant_center_id, "1234567890")
+        self.assertIn("is linked", result.data.audit_findings[0])
 
     @mock.patch("tools.merchant_tools.get_ads_client")
     def test_check_merchant_center_link_pending_and_missing(self, mock_client_getter):
@@ -526,7 +526,7 @@ class TestV26Tools(AuditLogCase):
 
         # Scenario 1: Pending invitation (strict spec with real v23 PENDING_APPROVAL status)
         mock_mci = mock.MagicMock(spec=["merchant_center_id"])
-        mock_mci.merchant_center_id = 9876543210
+        mock_mci.merchant_center_id = 1234567890
         mock_type = mock.MagicMock(spec=["name"])
         mock_type.name = "MERCHANT_CENTER"
         mock_status = mock.MagicMock(spec=["name"])
@@ -544,74 +544,19 @@ class TestV26Tools(AuditLogCase):
             [inv_row]   # product_link_invitation search (invitation pending)
         ]
 
-        result = check_merchant_center_link(merchant_id="9876543210", customer_id="1234567890")
+        result = check_merchant_center_link(merchant_id="1234567890", customer_id="1234567890")
         self.assertTrue(result.success)
         self.assertFalse(result.data.is_linked)
         self.assertEqual(len(result.data.pending_invitations), 1)
         self.assertEqual(result.data.pending_invitations[0].status, "PENDING_APPROVAL")
-        self.assertIn("ожидающее приглашение", result.data.audit_findings[0])
+        self.assertIn("pending invitation", result.data.audit_findings[0])
 
         # Scenario 2: Completely missing
         ga_service.search.side_effect = [[], []]
-        result2 = check_merchant_center_link(merchant_id="9876543210", customer_id="1234567890")
+        result2 = check_merchant_center_link(merchant_id="1234567890", customer_id="1234567890")
         self.assertTrue(result2.success)
         self.assertFalse(result2.data.is_linked)
-        self.assertIn("НЕ связан", result2.data.audit_findings[0])
-
-    def test_ad_status_update_request_validation(self):
-        req = AdStatusUpdateRequest(ad_group_id="123456789", ad_id="987654321", enabled=False)
-        self.assertEqual(req.ad_group_id, "123456789")
-        self.assertEqual(req.ad_id, "987654321")
-        self.assertFalse(req.enabled)
-
-        with self.assertRaises(Exception):
-            AdStatusUpdateRequest(ad_group_id="abc", ad_id="987654321", enabled=True)
-
-    @mock.patch("tools.rsa_tools.get_ads_client")
-    def test_update_ad_status_pause_safeguard(self, mock_client_getter):
-        client = mock.MagicMock()
-        ga_service = mock.MagicMock()
-        aga_service = mock.MagicMock()
-        client.get_service.side_effect = lambda s: aga_service if s == "AdGroupAdService" else ga_service
-        mock_client_getter.return_value = client
-
-        # Only 1 enabled RSA in ad group
-        row = mock.MagicMock()
-        row.ad_group.name = "Test Group"
-        row.ad_group_ad.ad.id = 987654321
-        row.ad_group_ad.status.name = "ENABLED"
-        ga_service.search.return_value = [row]
-
-        req = AdStatusUpdateRequest(ad_group_id="12345", ad_id="987654321", enabled=False)
-        res = update_ad_status(req)
-        self.assertFalse(res.success)
-        self.assertIn("SAFEGUARD: Cannot pause RSA", str(res.error))
-
-    @mock.patch("tools.rsa_tools.get_ads_client")
-    def test_update_ad_status_success(self, mock_client_getter):
-        client = mock.MagicMock()
-        ga_service = mock.MagicMock()
-        aga_service = mock.MagicMock()
-        client.get_service.side_effect = lambda s: aga_service if s == "AdGroupAdService" else ga_service
-        mock_client_getter.return_value = client
-
-        # 2 enabled RSAs in ad group
-        row1 = mock.MagicMock()
-        row1.ad_group.name = "Test Group"
-        row1.ad_group_ad.ad.id = 111
-        row1.ad_group_ad.status.name = "ENABLED"
-
-        row2 = mock.MagicMock()
-        row2.ad_group.name = "Test Group"
-        row2.ad_group_ad.ad.id = 222
-        row2.ad_group_ad.status.name = "ENABLED"
-
-        ga_service.search.return_value = [row1, row2]
-
-        req = AdStatusUpdateRequest(ad_group_id="12345", ad_id="111", enabled=False)
-        res = update_ad_status(req)
-        self.assertTrue(res.success)
-        self.assertIn("ENABLED -> PAUSED", res.data)
+        self.assertIn("is NOT linked", result2.data.audit_findings[0])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,16 @@
+{
+  "_comment": "Shipped neutral policy: no identities and no rules. Copy it to policy.local.json (ignored by git) or point MCP_POLICY_FILE at your own file. Every key is explained in docs/POLICY.md.",
+  "account": {
+    "customer_id": "",
+    "login_customer_id": "",
+    "merchant_center_id": "",
+    "feed_label": "",
+    "merchant_service_account": "",
+    "planner_fallback": { "login_customer_id": "", "customer_id": "" }
+  },
+  "ads": { "url_rules": [], "display_paths": ["Shop", "Sale"], "default_geo": [], "default_language": [], "priority_campaign_marker": "" },
+  "site": { "allowed_hosts": [], "forbidden_terms": [], "asset_name_prefix": "Site image" },
+  "shopping": { "name_prefix": "", "default_geo": [2276], "default_ad_group_name": "All products" },
+  "geo": { "target_country_codes": [], "allowed_target_ids": [] },
+  "promotion": { "default_code": "" }
+}

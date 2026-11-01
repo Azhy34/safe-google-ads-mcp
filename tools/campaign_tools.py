@@ -216,7 +216,7 @@ def step_campaign_cpc_ceiling(req: CampaignCeilingStepRequest, customer_id: str 
     return f"Campaign '{c.name}' ({req.campaign_id}) CPC ceiling updated from {curr_micros / 1e6:.2f} EUR to {new_micros / 1e6:.2f} EUR."
 
 @handle_google_ads_errors
-def get_campaign_targeting_overview(campaign_id: str = "24015242821", customer_id: str = CUSTOMER_ID) -> CampaignTargetingRecord:
+def get_campaign_targeting_overview(campaign_id: str, customer_id: str = CUSTOMER_ID) -> CampaignTargetingRecord:
     """
     Audits campaign targeting criteria (Geo Locations, Languages, Dayparting Ad Schedules, Device Modifiers)
     and network settings (Google Search vs Display Network).

@@ -93,6 +93,10 @@ def _check_outside_changes(start: datetime, now: datetime, source: str) -> Prefl
             name="OUTSIDE_CHANGES", status="INFO",
             summary=f"{len(interface)} change(s) made in the Google Ads interface, not through the MCP",
             items=[_describe_change(i) for i in interface[:MAX_ITEMS]])
+    if result["verdict"] == "INCOMPLETE_HISTORY":
+        # the newest changes were not compared: "every change matches" would be a claim about a part of the window only
+        return PreflightCheck(name="OUTSIDE_CHANGES", status="ATTENTION",
+                              summary=_cut(result.get("coverage_note") or "Google's change history is longer than one check reads; the newest changes were not compared"))
     if result["verdict"] == "NOT_VERIFIABLE_BEFORE_JOURNAL":
         return PreflightCheck(name="OUTSIDE_CHANGES", status="INFO",
                               summary=_cut(result.get("coverage_note") or "the changes of the period predate the journal and could not be checked"))

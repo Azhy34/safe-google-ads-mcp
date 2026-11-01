@@ -16,7 +16,8 @@ if hasattr(sys.stdout, "reconfigure"):
 CURRENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(CURRENT_DIR))
 
-from core.config import CUSTOMER_ID
+from core import policy
+from core.config import CUSTOMER_ID, MERCHANT_CENTER_ID
 from shield.error_shield import build_request
 from shield.telemetry import current_tool
 from shield import cloud_sink
@@ -25,12 +26,12 @@ from shield.models_campaign import (
     IdArguments, CreateSearchCampaignRequest
 )
 from shield.models_adgroup import (
-    AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest
+    AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, AdGroupStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest
 )
 from shield.models_ad import DeployGoldenRSARequest, AdStatusUpdateRequest
 from shield.models_asset import (
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
-    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
+    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest, AssetAssociationsRequest,
 )
 from shield.models_criterion import (
     ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest, SyncSharedNegativeListRequest
@@ -43,7 +44,7 @@ from tools.campaign_tools import (
     create_search_campaign as create_campaign_func
 )
 from tools.adgroup_tools import (
-    list_ad_groups, update_ad_group_bid, update_keyword_status,
+    list_ad_groups, update_ad_group_bid, update_keyword_status, update_ad_group_status,
     get_ad_group_keywords as adgroup_keywords_func,
     create_ad_group as create_adgroup_func,
     add_ad_group_keywords as add_keywords_func
@@ -96,6 +97,13 @@ from tools.currency_tools import get_demand_gen_currency_floor as currency_floor
 from tools.geo_tools import audit_geo_physical_locations as geo_audit_func
 from tools.billing_tools import get_google_ads_invoices as invoices_func
 from tools.merchant_tools import check_merchant_center_link as mc_link_func
+from shield.models_image import CreateImageAssetRequest
+from tools.image_tools import create_image_asset as create_image_func
+from shield.models_shopping import CreateShoppingCampaignRequest, CheckShoppingReadinessRequest
+from tools.shopping_tools import create_shopping_campaign as create_shopping_func
+from tools.shopping_readiness_tools import check_shopping_readiness as shopping_readiness_func
+from shield.models_location import CampaignLocationRequest
+from tools.location_tools import update_campaign_location as update_location_func
 
 # Initialize FastMCP Server
 mcp = FastMCP("Google Ads")
@@ -124,7 +132,7 @@ def _bad_ids(function: str, action_type: str = "READ", **ids) -> Optional[str]:
 
 # --- STEP 0: MANDATORY LOG CHECK (every tool below refuses until it has passed) ---
 
-# [чтение] ОБЯЗАТЕЛЬНЫЙ первый шаг сессии: проверка логов (ошибки и аномалии инструмента, правки мимо MCP, нарушения порядка работы). Пока она не пройдена, все рекламные тулы отвечают PREFLIGHT_REQUIRED; при находках агент показывает их владельцу и после его «продолжай» вызывает с acknowledge=True.
+# [read] MANDATORY first step of a session: log check (tool errors and anomalies, changes made outside the MCP, breaks of the working order). Until it passes, every ad tool answers PREFLIGHT_REQUIRED; on findings the agent shows them to the owner and, after their go-ahead, calls it again with acknowledge=True.
 @mcp_tool()
 def preflight_log_check(acknowledge: bool = False, days: Optional[int] = None) -> str:
     """
@@ -142,7 +150,7 @@ def preflight_log_check(acknowledge: bool = False, days: Optional[int] = None) -
 
 # --- LEVEL 1: CAMPAIGN TOOLS ---
 
-# [чтение] Список кампаний (активные и на паузе): дневной бюджет, стратегия ставок, потолок CPC. В журнале: list_campaigns.
+# [read] List campaigns (active and paused): daily budget, bidding strategy, CPC ceiling. Journal name: list_campaigns.
 @mcp_tool()
 def get_campaigns() -> str:
     """
@@ -153,9 +161,9 @@ def get_campaigns() -> str:
     res = list_campaigns()
     return res.model_dump_json(indent=2)
 
-# [чтение] Детали одной кампании по ID: бюджет, способ показа, стратегия, потолок CPC. В журнале: get_campaign_detail.
+# [read] Details of one campaign by ID: budget, delivery method, strategy, CPC ceiling. Journal name: get_campaign_detail.
 @mcp_tool()
-def get_campaign_details(campaign_id: str = "24015242821") -> str:
+def get_campaign_details(campaign_id: str) -> str:
     """
     Get detailed budget, delivery method, bidding strategy and Maximize Clicks CPC ceiling for a single campaign by ID.
     """
@@ -165,7 +173,7 @@ def get_campaign_details(campaign_id: str = "24015242821") -> str:
     res = get_campaign_detail(campaign_id)
     return res.model_dump_json(indent=2)
 
-# [запись] Включить или поставить на паузу кампанию по ID. В журнале: update_campaign_status.
+# [write] Enable or pause a campaign by ID. Journal name: update_campaign_status.
 @mcp_tool()
 def toggle_campaign_status(campaign_id: str, enabled: bool) -> str:
     """
@@ -177,7 +185,7 @@ def toggle_campaign_status(campaign_id: str, enabled: bool) -> str:
     res = update_campaign_status(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Изменить дневной бюджет кампании в EUR (допустимо 1–100). В журнале: update_campaign_budget.
+# [write] Change a campaign's daily budget in EUR (1-100 allowed). Journal name: update_campaign_budget.
 @mcp_tool()
 def set_campaign_daily_budget(campaign_id: str, budget_eur: float) -> str:
     """
@@ -189,9 +197,9 @@ def set_campaign_daily_budget(campaign_id: str, budget_eur: float) -> str:
     res = update_campaign_budget(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Аудит таргетинга: гео, языки, расписание показов, корректировки устройств, сети (Поиск/КМС).
+# [read] Targeting audit: geo, languages, ad schedule, device adjustments, networks (Search/Display).
 @mcp_tool()
-def get_campaign_targeting_overview(campaign_id: str = "24015242821") -> str:
+def get_campaign_targeting_overview(campaign_id: str) -> str:
     """
     Audits campaign targeting criteria (Geo Locations, Languages, Dayparting Ad Schedules, Device Modifiers)
     and network settings (Google Search vs Display Network).
@@ -202,7 +210,7 @@ def get_campaign_targeting_overview(campaign_id: str = "24015242821") -> str:
     res = targeting_func(campaign_id)
     return res.model_dump_json(indent=2)
 
-# [запись] Создать новую поисковую кампанию с таргетингом, группой и ключами. В журнале: create_search_campaign.
+# [write] Create a new Search campaign with targeting, an ad group and keywords. Journal name: create_search_campaign.
 @mcp_tool()
 def create_search_campaign(
     name: str,
@@ -210,14 +218,15 @@ def create_search_campaign(
     budget_eur: float = 3.0,
     cpc_ceiling_eur: float = 0.55,
     status: Literal["PAUSED", "ENABLED"] = "PAUSED",
-    geo_target_constants: list[int] = [2276, 2040],
-    language_constants: list[int] = [1001],
+    geo_target_constants: Optional[list[int]] = None,
+    language_constants: Optional[list[int]] = None,
     keywords: list[str] = []
 ) -> str:
     """
     Creates a new Google Ads Search campaign with dedicated budget, Maximize Clicks (TARGET_SPEND)
     strategy with CPC ceiling, Clean Search network settings (Partners/Display OFF), geo/language criteria,
     dayparting schedule (08:00 - 01:00), an initial ad group and clean phrase/exact keywords.
+    geo_target_constants and language_constants default to ads.default_geo and ads.default_language of the policy.
     """
     req, rejected = build_request(
         "create_search_campaign",
@@ -227,8 +236,8 @@ def create_search_campaign(
         budget_eur=budget_eur,
         cpc_ceiling_eur=cpc_ceiling_eur,
         status=status,
-        geo_target_constants=geo_target_constants,
-        language_constants=language_constants,
+        geo_target_constants=geo_target_constants if geo_target_constants is not None else list(policy.get("ads.default_geo", [])),
+        language_constants=language_constants if language_constants is not None else list(policy.get("ads.default_language", [])),
         keywords=keywords
     )
     if rejected:
@@ -236,9 +245,63 @@ def create_search_campaign(
     res = create_campaign_func(req)
     return res.model_dump_json(indent=2)
 
+# [write] Switch one country on or off inside an existing campaign; the last country cannot be removed. Journal name: update_campaign_location.
+@mcp_tool()
+def set_campaign_location(campaign_id: str, geo_target_id: int, enabled: bool) -> str:
+    """
+    Targets (enabled=True) or stops targeting (enabled=False) one country inside an existing campaign:
+    geo_target_id 2276 = Germany, 2040 = Austria. Switching off removes the country criterion (switching on adds it back);
+    ads, keywords and statistics stay. Refuses to remove the last targeted country. Check with get_campaign_targeting_overview.
+    """
+    req, rejected = build_request("update_campaign_location", CampaignLocationRequest,
+                                  campaign_id=campaign_id, geo_target_id=geo_target_id, enabled=enabled)
+    if rejected:
+        return rejected
+    res = update_location_func(req)
+    return res.model_dump_json(indent=2)
+
+# [write] Create a Shopping campaign on the Merchant Center feed: always paused, Maximize Clicks with a ceiling, countries from the policy (shopping.default_geo), schedule 08:00-01:00, one ad group and a product ad. Products: only the chosen ones (offers) or the whole feed with an explicit all_products. check_shopping_readiness and a check of the offer IDs against the catalog run before anything is written.
+@mcp_tool()
+def create_shopping_campaign(
+    name: str,
+    budget_eur: float = 5.0,
+    cpc_ceiling_eur: float = 0.50,
+    offers: Optional[List[str]] = None,
+    all_products: bool = False,
+    exclude_custom_label_0: Optional[List[str]] = None,
+    dry_run: bool = False,
+    ad_group_name: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+    feed_label: Optional[str] = None
+) -> str:
+    """
+    Creates a Standard Shopping campaign that advertises the products of the Merchant Center feed (product cards: photo, price,
+    title from the feed; no keywords, no texts). Always created PAUSED (enable with toggle_campaign_status after the owner's yes).
+    Maximize Clicks with the CPC ceiling, Google search only, geo from shopping.default_geo of the policy (presence),
+    schedule 08:00-01:00, one ad group with one product ad. The name must start with shopping.name_prefix when the policy sets one.
+    merchant_id, feed_label and ad_group_name default to the policy (account.merchant_center_id, account.feed_label,
+    shopping.default_ad_group_name).
+    Which products is always a choice: offers = the offer_id of the products to advertise (e.g. ['WE-003-150x250', 'WE-003-muster']);
+    only they are advertised, each must exist in the catalog. all_products=True advertises the whole feed instead (never the default);
+    only then exclude_custom_label_0 leaves out products by g:custom_label_0 (e.g. ['muster']).
+    Before anything is written check_shopping_readiness's judgement must not be BLOCKED (link, Shopping ads program, feed label,
+    approved products). dry_run=True runs all checks and builds the operations, and writes nothing.
+    """
+    req, rejected = build_request(
+        "create_shopping_campaign", CreateShoppingCampaignRequest,
+        name=name, budget_eur=budget_eur, cpc_ceiling_eur=cpc_ceiling_eur,
+        offers=offers or [], all_products=all_products,
+        exclude_custom_label_0=exclude_custom_label_0 or [], dry_run=dry_run,
+        **{key: value for key, value in (("ad_group_name", ad_group_name), ("merchant_id", merchant_id), ("feed_label", feed_label)) if value is not None}
+    )
+    if rejected:
+        return rejected
+    res = create_shopping_func(req)
+    return res.model_dump_json(indent=2)
+
 # --- LEVEL 2: ADGROUP & BIDDING TOOLS ---
 
-# [запись] Создать новую группу объявлений в существующей кампании (опционально с ключами).
+# [write] Create a new ad group in an existing campaign (optionally with keywords).
 @mcp_tool()
 def create_ad_group(
     campaign_id: str,
@@ -262,7 +325,7 @@ def create_ad_group(
     res = create_adgroup_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Добавить позитивные ключевые слова (Exact [kw] или Phrase "kw") в группу объявлений.
+# [write] Add positive keywords (Exact [kw] or Phrase "kw") to an ad group.
 @mcp_tool()
 def add_ad_group_keywords(
     ad_group_id: str,
@@ -282,7 +345,7 @@ def add_ad_group_keywords(
     res = add_keywords_func(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Группы объявлений с базовыми CPC-ставками и статусом показа. В журнале: list_ad_groups.
+# [read] Ad groups with base CPC bids and serving status. Journal name: list_ad_groups.
 @mcp_tool()
 def get_ad_groups(campaign_id: Optional[str] = None) -> str:
     """
@@ -295,13 +358,13 @@ def get_ad_groups(campaign_id: Optional[str] = None) -> str:
     return res.model_dump_json(indent=2)
 
 
-# [запись] Сдвинуть потолок CPC кампании на ±0.05 € (границы 0.10–3.00). Главный рычаг ставок: у всех кампаний Maximize Clicks. В журнале: step_campaign_cpc_ceiling.
+# [write] Step a campaign's CPC ceiling by +-0.05 EUR (bounds 0.10-3.00). The main bid lever: all campaigns use Maximize Clicks. Journal name: step_campaign_cpc_ceiling.
 @mcp_tool()
 def step_bid_threshold(campaign_id: str, direction: Literal["+0.05", "-0.05"] = "+0.05") -> str:
     """
     Steps the campaign's Maximize Clicks CPC ceiling (target_spend.cpc_bid_ceiling_micros)
-    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for all Maximize Clicks campaigns
-    campaigns, which use TARGET_SPEND; ad group bids are ignored under that strategy.
+    by +0.05 or -0.05 EUR (bounds 0.10-3.00 EUR). This is the bid lever for campaigns that
+    use TARGET_SPEND; ad group bids are ignored under that strategy.
     """
     req, rejected = build_request("step_campaign_cpc_ceiling", CampaignCeilingStepRequest, campaign_id=campaign_id, direction=direction)
     if rejected:
@@ -309,7 +372,7 @@ def step_bid_threshold(campaign_id: str, direction: Literal["+0.05", "-0.05"] = 
     res = step_campaign_cpc_ceiling(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Ставка CPC группы; работает только в MANUAL_CPC, иначе отказ. В журнале: update_ad_group_bid.
+# [write] Ad group CPC bid; works only with MANUAL_CPC, otherwise refused. Journal name: update_ad_group_bid.
 @mcp_tool()
 def set_ad_group_cpc_bid(ad_group_id: str, new_bid_eur: float) -> str:
     """
@@ -322,7 +385,7 @@ def set_ad_group_cpc_bid(ad_group_id: str, new_bid_eur: float) -> str:
     res = update_ad_group_bid(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Ключи группы: Quality Score, тип соответствия, прогноз CTR, релевантность, индивидуальные ставки.
+# [read] Keywords of a group: Quality Score, match type, predicted CTR, relevance, individual bids.
 @mcp_tool()
 def get_ad_group_keywords(ad_group_id: str) -> str:
     """
@@ -335,7 +398,7 @@ def get_ad_group_keywords(ad_group_id: str) -> str:
     res = adgroup_keywords_func(ad_group_id)
     return res.model_dump_json(indent=2)
 
-# [запись] Пауза/включение одного позитивного ключа по criterion_id (минус-слова не трогает). В журнале: update_keyword_status.
+# [write] Pause/enable one positive keyword by criterion_id (negative keywords are not touched). Journal name: update_keyword_status.
 @mcp_tool()
 def set_keyword_status(ad_group_id: str, criterion_id: str, enabled: bool) -> str:
     """
@@ -348,11 +411,26 @@ def set_keyword_status(ad_group_id: str, criterion_id: str, enabled: bool) -> st
     res = update_keyword_status(req)
     return res.model_dump_json(indent=2)
 
+# [write] Pause/enable a whole ad group by ID (not the last enabled one of a campaign; enabling only with a keyword and an RSA). Journal name: update_ad_group_status.
+@mcp_tool()
+def set_ad_group_status(ad_group_id: str, enabled: bool) -> str:
+    """
+    Pauses (enabled=False) or enables (enabled=True) one ad group; ad_group_id comes from get_ad_groups.
+    Refuses to pause the last ENABLED ad group of a campaign, and refuses to enable a group that has no ENABLED positive
+    keyword or no ENABLED Responsive Search Ad. Warns when the group has no images of its own (AD_IMAGE at ad-group level).
+    Answers with the status Google holds after the change.
+    """
+    req, rejected = build_request("update_ad_group_status", AdGroupStatusUpdateRequest, ad_group_id=ad_group_id, enabled=enabled)
+    if rejected:
+        return rejected
+    res = update_ad_group_status(req)
+    return res.model_dump_json(indent=2)
+
 # --- LEVEL 3: RSA ADS TOOLS ---
 
-# [чтение] RSA-объявления кампании со всеми 15 заголовками и 4 описаниями. В журнале: list_campaign_ads.
+# [read] RSA ads of a campaign with all 15 headlines and 4 descriptions. Journal name: list_campaign_ads.
 @mcp_tool()
-def get_campaign_ads(campaign_id: str = "24015242821") -> str:
+def get_campaign_ads(campaign_id: str) -> str:
     """
     Lists all active/paused Responsive Search Ads with all 15 headlines and 4 descriptions.
     """
@@ -362,7 +440,7 @@ def get_campaign_ads(campaign_id: str = "24015242821") -> str:
     res = list_campaign_ads(campaign_id)
     return res.model_dump_json(indent=2)
 
-# [запись] Создать «золотое» RSA: 15 заголовков (≤30) + 4 описания (≤90), H1 закреплён с DKI, в URL ; при 3 активных RSA ставит на паузу самое старое.
+# [write] Create a "golden" RSA: 15 headlines (<=30) + 4 descriptions (<=90), H1 pinned with DKI; the URL rules of the business policy (ads.url_rules, e.g. a required coupon parameter on one host and none on another) are enforced by the shield; with 3 active RSAs the oldest is paused; with ad_id the ad is edited in place.
 @mcp_tool()
 def deploy_golden_rsa(
     ad_group_id: str,
@@ -370,8 +448,8 @@ def deploy_golden_rsa(
     headlines: List[str],
     descriptions: List[str],
     pinned_h1_dki: str,
-    path1: str = "Products",
-    path2: str = "Sale",
+    path1: Optional[str] = None,
+    path2: Optional[str] = None,
     ad_id: Optional[str] = None
 ) -> str:
     """
@@ -379,32 +457,34 @@ def deploy_golden_rsa(
     - Exactly 15 headlines (<=30 chars); headlines[0] must equal pinned_h1_dki
     - Exactly 4 descriptions (<=90 chars)
     - headlines[0] is pinned to Headline 1 and must use Dynamic Keyword Insertion ({KeyWord:...})
-    - Mandatory  in URL
-    - If 3 RSAs are already enabled, pauses only the oldest one, atomically with the create.
+    - URL rules of the business policy (ads.url_rules) apply to final_url and to the texts: a rule can require a query
+      parameter (for example a coupon) for one host and forbid it, in the URL and in every headline and description, for
+      another (the shield rejects a breach with REQUEST_REJECTED, before any call to Google).
+    - path1 and path2 (display URL paths, max 15 chars) default to ads.display_paths of the policy.
+    - If `ad_id` is passed (or if the ad group already has an ENABLED RSA), updates the existing RSA in-place via AdService.mutate_ads (preserving ad_id and avoiding duplicates).
     """
     req, rejected = build_request(
         "deploy_golden_rsa", DeployGoldenRSARequest,
         ad_group_id=ad_group_id,
-        ad_id=ad_id,
         final_url=final_url,
         headlines=headlines,
         descriptions=descriptions,
         pinned_h1_dki=pinned_h1_dki,
-        path1=path1,
-        path2=path2
+        path1=path1 if path1 is not None else policy.display_paths()[0],
+        path2=path2 if path2 is not None else policy.display_paths()[1],
+        ad_id=ad_id
     )
     if rejected:
         return rejected
     res = rsa_deploy_func(req)
     return res.model_dump_json(indent=2)
 
-
-# [запись] Пауза/включение конкретного RSA в группе (защита: не дает отключить последнее активное RSA).
+# [write] Pause/enable one RSA ad by ad_id (guard: the only active RSA of a group cannot be stopped). Journal name: update_ad_status.
 @mcp_tool()
 def set_ad_status(ad_group_id: str, ad_id: str, enabled: bool) -> str:
     """
     Pauses (enabled=False) or enables (enabled=True) one Responsive Search Ad (RSA) in an ad group.
-    ad_id comes from get_campaign_ads. Safeguard: Refuses to pause the last enabled RSA in an ad group.
+    ad_id comes from get_campaign_ads. Refuses to pause the last enabled RSA in an ad group.
     """
     req, rejected = build_request(
         "update_ad_status", AdStatusUpdateRequest,
@@ -419,23 +499,30 @@ def set_ad_status(ad_group_id: str, ad_id: str, enabled: bool) -> str:
 
 # --- LEVEL 4: ASSETS (OBJECTS) TOOLS (Matching Google Ads UI Tabs) ---
 
-# [чтение] Вкладка «Связи»: какие объекты привязаны к аккаунту/кампании/группе (фильтр по уровню и типу).
+# [read] "Associations" tab: which assets are linked to the account/campaign/group (filter by level, type, campaign, group; image size in the record).
 @mcp_tool()
-def get_assets_associations(level: Optional[str] = None, field_type: Optional[str] = None) -> str:
+def get_assets_associations(level: Optional[str] = None, field_type: Optional[str] = None,
+                            campaign_id: Optional[str] = None, ad_group_id: Optional[str] = None) -> str:
     """
-    Google Ads UI Tab 1: 'Связи' (Associations).
+    Google Ads UI Tab 1: 'Associations'.
     Retrieves linked assets across Account (CUSTOMER), CAMPAIGN, and AD_GROUP levels.
-    Supports filtering by level ('CUSTOMER', 'CAMPAIGN', 'AD_GROUP') and field_type ('IMAGE', 'SITELINK', 'CALLOUT', 'PRICE', 'STRUCTURED_SNIPPET', 'PROMOTION', 'BUSINESS_LOGO', 'BUSINESS_NAME', etc.).
-    Returns text previews, image CDN URLs, and binding status.
+    Filters: level ('CUSTOMER', 'CAMPAIGN', 'AD_GROUP'); field_type ('AD_IMAGE', 'SITELINK', 'CALLOUT', 'PRICE', 'STRUCTURED_SNIPPET',
+    'PROMOTION', 'BUSINESS_LOGO', 'BUSINESS_NAME', etc.); campaign_id = that campaign and its ad groups; ad_group_id = that ad group only.
+    Without campaign_id / ad_group_id the answer covers the whole account (150 rows, ~70 000 characters on 31.10.2026): name one.
+    Returns text previews, image CDN URLs, image pixel size (asset_size, e.g. '1200x628 (1.91:1)'), and binding status.
     """
-    res = assocs_func(level=level, field_type=field_type)
+    req, rejected = build_request("get_assets_associations", AssetAssociationsRequest, action_type="READ",
+                                  level=level, field_type=field_type, campaign_id=campaign_id, ad_group_id=ad_group_id)
+    if rejected:
+        return rejected
+    res = assocs_func(level=req.level, field_type=req.field_type, campaign_id=req.campaign_id, ad_group_id=req.ad_group_id)
     return res.model_dump_json(indent=2)
 
-# [чтение] Вкладка «Эффективность»: показы, клики, CTR, расход и оценка Google по объектам за N дней.
+# [read] "Performance" tab: impressions, clicks, CTR, cost and Google's rating per asset over N days.
 @mcp_tool()
 def get_assets_performance(days: int = 30, field_type: Optional[str] = None) -> str:
     """
-    Google Ads UI Tab 2: 'Эффективность' (Asset Performance).
+    Google Ads UI Tab 2: 'Asset Performance'.
     Retrieves Impressions, Clicks, CTR %, Cost (EUR), and Google AI Performance Label (BEST, GOOD, LOW, LEARNING, NOT_APPLICABLE)
     for in-ad assets (Headlines, Descriptions, Landscape/Square Images) and extensions (Sitelinks, Snippets, Callouts, Price).
     Extensions have no Google label; their HEURISTIC_* label is a CTR-based estimate.
@@ -443,23 +530,24 @@ def get_assets_performance(days: int = 30, field_type: Optional[str] = None) -> 
     res = perf_func(days=days, field_type=field_type)
     return res.model_dump_json(indent=2)
 
-# [чтение] Вкладка «Разнообразие»: полнота набора объектов (картинки, сайтлинки, сниппеты и т.д.), оценка 0–100%.
+# [read] "Variety" tab: completeness of the asset set (images, sitelinks, snippets, ...), score 0-100%.
 @mcp_tool()
 def get_assets_diversity() -> str:
     """
-    Google Ads UI Tab 3: 'Разнообразие объектов' (Asset Variety & Health).
+    Google Ads UI Tab 3: 'Asset Variety & Health'.
     Audits active campaigns to ensure complete asset extension variety:
     Images (min 4), Sitelinks (min 4), Snippets, Callouts, Promotions, Price, Logo, and returns a 0-100% Quality Score.
     """
     res = diversity_func()
     return res.model_dump_json(indent=2)
 
-# [запись] Привязать существующий объект к аккаунту, кампании или группе.
+# [write] Link an existing asset to the account, a campaign or a group.
 @mcp_tool()
 def link_asset_to_entity(level: str, entity_id: str, asset_id: str, field_type: str) -> str:
     """
     Binds an existing asset to Account ('CUSTOMER'), Campaign ('CAMPAIGN'), or Ad Group ('AD_GROUP').
-    field_type: IMAGE, SITELINK, CALLOUT, PROMOTION, STRUCTURED_SNIPPET, BUSINESS_NAME, BUSINESS_LOGO, PRICE.
+    field_type: AD_IMAGE (search ad image; IMAGE does not exist in the API), SITELINK, CALLOUT, PROMOTION,
+    STRUCTURED_SNIPPET, BUSINESS_NAME, BUSINESS_LOGO, PRICE.
     """
     req, rejected = build_request("link_asset_to_entity", LinkAssetRequest, level=level.upper(), entity_id=entity_id, asset_id=asset_id, field_type=field_type.upper())
     if rejected:
@@ -467,7 +555,7 @@ def link_asset_to_entity(level: str, entity_id: str, asset_id: str, field_type: 
     res = link_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Отвязать объект от аккаунта, кампании или группы.
+# [write] Unlink an asset from the account, a campaign or a group.
 @mcp_tool()
 def unlink_asset_from_entity(level: str, entity_id: str, asset_id: str, field_type: str) -> str:
     """
@@ -479,7 +567,7 @@ def unlink_asset_from_entity(level: str, entity_id: str, asset_id: str, field_ty
     res = unlink_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Создать новый объект цен (Price Asset) с валидацией предложений.
+# [write] Create a new Price Asset with validation of the offerings.
 @mcp_tool()
 def create_price_asset(
     name: str,
@@ -508,14 +596,14 @@ def create_price_asset(
     res = create_price_func(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Дополнительные ссылки сайта: что создастся и привяжется к кампании, что уже есть, сколько их станет. Ничего не меняет. Всегда вызывать перед create_sitelink_assets.
+# [read] Sitelinks of the site: what would be created and linked to the campaign, what exists already, how many there would be. Changes nothing. Always call before create_sitelink_assets.
 @mcp_tool()
 def preview_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
     """
     Read-only dry run of create_sitelink_assets: validates the sitelinks and says, per sitelink, whether it would be
     created, reused (identical asset exists) or skipped (already linked), and how many sitelinks the campaign would
     have. sitelinks: list of dicts with link_text (max 25), description1 (max 35), description2 (max 35) and final_url
-    (clean https address, no query string). 2 to 6 sitelinks per call.
+    (clean https address on a host of site.allowed_hosts of the policy, no query string). 2 to 6 sitelinks per call.
     """
     req, rejected = build_request("preview_sitelink_assets", CreateSitelinkAssetsRequest, action_type="READ",
                                   campaign_id=campaign_id, sitelinks=sitelinks)
@@ -524,7 +612,7 @@ def preview_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
     res = preview_sitelinks_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Создать дополнительные ссылки сайта (Sitelink-ассеты) и привязать их к кампании. Только после preview_sitelink_assets и «да» владельца с числом ссылок.
+# [write] Create the site's sitelink assets and link them to the campaign. Only after preview_sitelink_assets and the owner's yes with the number of sitelinks.
 @mcp_tool()
 def create_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
     """
@@ -539,13 +627,14 @@ def create_sitelink_assets(campaign_id: str, sitelinks: List[dict]) -> str:
     res = create_sitelinks_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Уточнения (Callout): создать недостающие тексты и привязать к кампании. Повтор не плодит дубли. Только после «да» владельца на точный список.
+# [write] Callouts: create the missing texts and link them to the campaign. A repeat creates no duplicates. Only after the owner's yes on the exact list.
 @mcp_tool()
 def create_callout_assets(campaign_id: str, callouts: List[str]) -> str:
     """
     Creates callout assets that do not exist yet and links them to the campaign. An existing callout with the same
     text is reused, and one that is already linked is skipped, so a repeat writes nothing. callouts: 2 to 10 texts,
-    each 1 to 25 characters. Writes to the ad account: only with the owner's explicit yes for this exact list.
+    each 1 to 25 characters. Words listed in site.forbidden_terms of the policy are refused. Writes to the ad account:
+    only with the owner's explicit yes for this exact list.
     """
     req, rejected = build_request("create_callout_assets", CreateCalloutAssetsRequest,
                                   campaign_id=campaign_id, callouts=callouts)
@@ -554,7 +643,7 @@ def create_callout_assets(campaign_id: str, callouts: List[str]) -> str:
     res = create_callouts_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Одно структурированное описание: создать или переиспользовать и привязать к кампании. Заголовок только из списка Google.
+# [write] One structured snippet: create or reuse and link to the campaign. The header only from Google's list.
 @mcp_tool()
 def create_structured_snippet_asset(campaign_id: str, header: str, values: List[str]) -> str:
     """
@@ -572,7 +661,7 @@ def create_structured_snippet_asset(campaign_id: str, header: str, values: List[
     res = create_snippet_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Smart Facade: атомарная синхронизация цен (создание + поиск старых + отвязка + привязка)
+# [write] Smart Facade: atomic price sync (create + find old + unlink + link)
 @mcp_tool()
 def sync_price_extension(
     entity_id: str,
@@ -612,16 +701,33 @@ def sync_price_extension(
 
 
 
-# [чтение] Все картинки аккаунта с полноразмерными превью. В журнале: list_account_assets.
+# [write] Upload an image of the advertiser's site to the account's library (1.91:1 or 1:1, cut, JPEG); dry_run only checks. Does not link: that is link_asset_to_entity. Journal name: create_image_asset.
 @mcp_tool()
-def get_campaign_images() -> str:
+def create_image_asset(source_url: str, ratio: Literal["LANDSCAPE", "SQUARE"], name: Optional[str] = None, dry_run: bool = False) -> str:
     """
-    Lists all image assets in the account with full-size CDN preview URLs.
+    Uploads an image of the advertiser's own site (a host of site.allowed_hosts, e.g. the og image of a page, a product photo
+    or the Merchant Center image_link) as an image asset. ratio LANDSCAPE = 1.91:1 (at least 600x314), SQUARE = 1:1 (at least 300x300);
+    a picture outside the 1 % tolerance is cut from the centre, WebP is converted to JPEG. Any other host is refused.
+    dry_run=True downloads and checks the picture and writes nothing. The same content is uploaded once (the name carries a
+    content hash). Returns the asset_id; link it with link_asset_to_entity(level='AD_GROUP', field_type='AD_IMAGE').
     """
-    res = list_account_assets("IMAGE")
+    req, rejected = build_request("create_image_asset", CreateImageAssetRequest, source_url=source_url, ratio=ratio, name=name, dry_run=dry_run)
+    if rejected:
+        return rejected
+    res = create_image_func(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Матрица объектов кампании и её групп: какие типы подключены, каких не хватает.
+# [read] All images of the account with full-size previews. Journal name: list_account_assets.
+@mcp_tool()
+def get_campaign_images(name_contains: Optional[str] = None) -> str:
+    """
+    Lists all image assets in the account (no 100-row cap) with full-size CDN preview URLs and pixel size
+    (aspect_ratio "WxH (r:1)": 1.00 square, 1.91 landscape). name_contains filters by asset name, case-insensitive.
+    """
+    res = list_account_assets("IMAGE", name_contains=name_contains)
+    return res.model_dump_json(indent=2)
+
+# [read] Asset matrix of a campaign and its groups: which types are connected, which are missing.
 @mcp_tool()
 def get_campaign_assets_overview(campaign_id: str) -> str:
     """
@@ -637,7 +743,7 @@ def get_campaign_assets_overview(campaign_id: str) -> str:
 
 # --- LEVEL 5: NEGATIVE SHIELDS & AUDITS ---
 
-# [запись] Залить языковой набор минус-слов (DE/FR/ES): DIY-магазины, «бесплатно», мебель.
+# [write] Load a language set of negative keywords (DE/FR/ES): DIY stores, "free", furniture.
 @mcp_tool()
 def apply_negative_shield(campaign_id: str, language: str = "de") -> str:
     """
@@ -649,7 +755,7 @@ def apply_negative_shield(campaign_id: str, language: str = "de") -> str:
     res = neg_shield_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Добавить минус-слова в кампанию (PHRASE если несколько слов, BROAD если одно).
+# [write] Add negative keywords to a campaign (PHRASE if several words, BROAD if one).
 @mcp_tool()
 def add_negative_keywords(campaign_id: str, keywords: List[str]) -> str:
     """
@@ -662,7 +768,7 @@ def add_negative_keywords(campaign_id: str, keywords: List[str]) -> str:
     res = add_neg_func(campaign_id, keywords)
     return res.model_dump_json(indent=2)
 
-# [запись] Удалить минус-слово кампании по тексту (match_type нужен при дублях).
+# [write] Remove a campaign negative keyword by text (match_type is needed for duplicates).
 @mcp_tool()
 def remove_negative_keyword(campaign_id: str, keyword_text: str, match_type: Optional[str] = None) -> str:
     """
@@ -675,7 +781,7 @@ def remove_negative_keyword(campaign_id: str, keyword_text: str, match_type: Opt
     res = remove_neg_func(req)
     return res.model_dump_json(indent=2)
 
-# [запись] Синхронизировать общий список минус-слов аккаунта (SharedSetService, SharedCriterionService, CampaignSharedSetService).
+# [write] Sync the account's shared negative keyword list (SharedSetService, SharedCriterionService, CampaignSharedSetService).
 @mcp_tool()
 def sync_shared_negative_list(
     list_name: str,
@@ -700,9 +806,9 @@ def sync_shared_negative_list(
     res = sync_shared_neg_func(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Разбор поисковых запросов за N дней: нерелевантные без конверсий — кандидаты в минусы. В журнале: mine_search_terms.
+# [read] Search term analysis over N days: irrelevant ones without conversions are candidates for negatives. Journal name: mine_search_terms.
 @mcp_tool()
-def mine_search_terms_and_harvest_negatives(campaign_id: str = "24015242821", days: int = 14) -> str:
+def mine_search_terms_and_harvest_negatives(campaign_id: str, days: int = 14) -> str:
     """
     Scans search_term_view to identify non-converting, irrelevant search queries leaking ad budget.
     """
@@ -712,14 +818,14 @@ def mine_search_terms_and_harvest_negatives(campaign_id: str = "24015242821", da
     res = mine_search_terms(campaign_id, days)
     return res.model_dump_json(indent=2)
 
-# [чтение] Аудит кампании по 4 уровням (бюджет/потолок, группы, RSA, минус-щит), оценка 0–100%.
+# [read] Audit of a campaign on 4 levels (budget/ceiling, groups, RSA, negative shield), score 0-100%.
 @mcp_tool()
-def audit_campaign_4level_shield(campaign_id: str = "24015242821") -> str:
+def audit_campaign_4level_shield(campaign_id: str) -> str:
     """
     Comprehensive 4-Level Quality Audit:
     - Level 1: Campaign budget, primary status, Maximize Clicks CPC ceiling
     - Level 2: Ad Groups (bids checked only for MANUAL_CPC)
-    - Level 3: RSA Copy (15/4 Matrix, PROMO10 promo, Ad Strength notes)
+    - Level 3: RSA Copy (15/4 Matrix, the URL rules of the policy, Ad Strength notes)
     - Level 4: Negative Keyword Shield strength
     Returns an objective 0-100% Quality Score.
     """
@@ -729,7 +835,7 @@ def audit_campaign_4level_shield(campaign_id: str = "24015242821") -> str:
     res = audit_func(campaign_id)
     return res.model_dump_json(indent=2)
 
-# [чтение] Показы, клики, расход по дням и дням недели в разрезе кампаний.
+# [read] Impressions, clicks, cost by day and weekday per campaign.
 @mcp_tool()
 def get_daily_performance(days: int = 14) -> str:
     """
@@ -738,7 +844,7 @@ def get_daily_performance(days: int = 14) -> str:
     res = daily_perf_func(days)
     return res.model_dump_json(indent=2)
 
-# [чтение] Доля показов и потери из-за бюджета и рейтинга объявления.
+# [read] Impression share and losses due to budget and ad rank.
 @mcp_tool()
 def get_impression_share_loss(days: int = 7) -> str:
     """
@@ -747,7 +853,7 @@ def get_impression_share_loss(days: int = 7) -> str:
     res = imp_share_func(days)
     return res.model_dump_json(indent=2)
 
-# [чтение] История изменений аккаунта (1–30 дней): кто и что менял — UI, API, скрипты, авто-правила.
+# [read] Account change history (1-30 days): who changed what - UI, API, scripts, automated rules.
 @mcp_tool()
 def get_change_history(days: int = 7, campaign_id: Optional[str] = None, limit: int = 200) -> str:
     """
@@ -763,7 +869,7 @@ def get_change_history(days: int = 7, campaign_id: Optional[str] = None, limit: 
     res = change_history_func(days, campaign_id, limit)
     return res.model_dump_json(indent=2)
 
-# [чтение] Сверка истории Google с журналом MCP: какие изменения сделаны через MCP, а какие мимо (скрипты, другие агенты). Изменения старше журнала не сверяются: вердикт NOT_VERIFIABLE_BEFORE_JOURNAL.
+# [read] Reconcile Google's history with the MCP journal: which changes were made through the MCP and which outside it (scripts, other agents). Changes older than the journal are not reconciled: verdict NOT_VERIFIABLE_BEFORE_JOURNAL.
 @mcp_tool()
 def verify_changes_logged(days: int = 2, source: str = "local") -> str:
     """
@@ -773,14 +879,17 @@ def verify_changes_logged(days: int = 2, source: str = "local") -> str:
     source="local": this machine's google-ads/logs/audit.jsonl; source="cloud": the online journal of every
     operator (needs the reader key), so other operators' MCP changes count as logged; source="auto": the online
     journal if it reaches back over the whole period, else the local file. Changes older than the journal cannot be
-    checked (before_log_started); if that is all there is, the verdict is NOT_VERIFIABLE_BEFORE_JOURNAL. Read-only.
+    checked (before_log_started); if that is all there is, the verdict is NOT_VERIFIABLE_BEFORE_JOURNAL. Reads up to
+    9999 changes of the period; if Google has more, the verdict is INCOMPLETE_HISTORY (history_truncated=true) and the
+    calls after the cut-off are unchecked_after_truncation: narrow `days`. Dry runs (dry_run=true) are only counted in
+    dry_run_calls; a change is credited to the call whose arguments name the same ids, then to the nearest in time. Read-only.
     """
     res = verify_logged_func(days, source)
     return res.model_dump_json(indent=2)
 
 # --- OBSERVABILITY: ONLINE JOURNAL (Cloud Logging) AND TRACES (Cloud Trace) ---
 
-# [чтение] Онлайн-журнал MCP из Cloud Logging со всех машин (фильтры: severity, operator, function, session_id); с него начинать разбор ошибок.
+# [read] The MCP's online journal from Cloud Logging, all machines (filters: severity, operator, function, session_id); start error analysis here.
 @mcp_tool()
 def get_cloud_logs(hours: int = 24, severity: Optional[str] = None, operator: Optional[str] = None,
                    function: Optional[str] = None, request_id: Optional[str] = None, limit: int = 50,
@@ -799,7 +908,7 @@ def get_cloud_logs(hours: int = 24, severity: Optional[str] = None, operator: Op
     res = cloud_logs_func(hours, severity, operator, function, request_id, limit, session_id, tool)
     return res.model_dump_json(indent=2)
 
-# [чтение] Трейс одного вызова из Cloud Trace: тайминги и куда ушло время (Google Ads API или наш код).
+# [read] Trace of one call from Cloud Trace: timings and where the time went (Google Ads API or our own code).
 @mcp_tool()
 def get_cloud_trace(trace_id: str) -> str:
     """
@@ -810,7 +919,7 @@ def get_cloud_trace(trace_id: str) -> str:
     res = cloud_trace_func(trace_id)
     return res.model_dump_json(indent=2)
 
-# [чтение] Здоровье самого MCP по журналу: ошибки, p50/p95, находки (CODE_BUG, SLOW, AUTH…) и аномалии против предыдущего окна (новый код ошибки, всплеск, цикл отказов, правки одним процессом). Что чинить.
+# [read] Health of the MCP itself from the journal: errors, p50/p95, findings (CODE_BUG, SLOW, AUTH...) and anomalies against the previous window (new error code, spike, rejection loop, edits by one process). What to fix.
 @mcp_tool()
 def analyze_tool_health(days: int = 7, operator: Optional[str] = None, since: Optional[str] = None, source: str = "auto") -> str:
     """
@@ -829,7 +938,7 @@ def analyze_tool_health(days: int = 7, operator: Optional[str] = None, since: Op
     res = tool_health_func(days, operator, since, source)
     return res.model_dump_json(indent=2)
 
-# [чтение] Проверка, соблюдал ли агент порядок работы скилла (READ_FIRST, ONE_LEVER, AUTO_FIX_ALONE, VERIFY_AFTER); только советует. record=True пишет вердикты в облачный лог.
+# [read] Check whether the agent kept the skill's working order (READ_FIRST, ONE_LEVER, AUTO_FIX_ALONE, VERIFY_AFTER); advises only. record=True writes the verdicts to the cloud log.
 @mcp_tool()
 def evaluate_agent_process(days: int = 7, since: Optional[str] = None, session_id: Optional[str] = None,
                            operator: Optional[str] = None, source: str = "auto", record: bool = False) -> str:
@@ -846,17 +955,18 @@ def evaluate_agent_process(days: int = 7, since: Optional[str] = None, session_i
     res = process_eval_func(days, since, session_id, operator, source, record)
     return res.model_dump_json(indent=2)
 
-# [запись] Находит дубли ключей между High Intent и Core/Jungle и ставит дубли в Core/Jungle на паузу.
+# [write] Find duplicate keywords between the priority campaign (policy ads.priority_campaign_marker) and the other campaigns, and pause the duplicates in the other campaigns.
 @mcp_tool()
 def auto_fix_collisions_and_dupes() -> str:
     """
-    Scans active campaigns for duplicate keywords between High Intent and Core/Jungle campaigns,
-    and automatically pauses dupes in Core/Jungle.
+    Scans active campaigns for duplicate keywords between the priority campaign (campaign name containing
+    ads.priority_campaign_marker of the policy) and all other campaigns, and automatically pauses the duplicates
+    in the other campaigns.
     """
     res = fix_collisions_func()
     return res.model_dump_json(indent=2)
 
-# [чтение] Рекомендации Google AI из Recommendations API (только просмотр).
+# [read] Google AI recommendations from the Recommendations API (view only).
 @mcp_tool()
 def fetch_google_ai_recommendations() -> str:
     """
@@ -865,7 +975,7 @@ def fetch_google_ai_recommendations() -> str:
     res = ai_recs_func()
     return res.model_dump_json(indent=2)
 
-# [чтение] Идеи ключей и объём поиска через KeywordPlanIdeaService (по умолчанию DE/Германия).
+# [read] Keyword ideas and search volume via KeywordPlanIdeaService (default: German, Germany).
 @mcp_tool()
 def search_keyword_ideas(seeds: List[str], language_id: str = "1001", location_ids: List[str] = ["2276"]) -> str:
     """
@@ -875,7 +985,7 @@ def search_keyword_ideas(seeds: List[str], language_id: str = "1001", location_i
     res = keyword_ideas_func(seeds, language_id, location_ids)
     return res.model_dump_json(indent=2)
 
-# [чтение] Аудит Enhanced Conversions: статус conversion_tracking_setting, принятие Customer Data Terms, список основных/вторичных конверсий.
+# [read] Enhanced Conversions audit: conversion_tracking_setting status, Customer Data Terms acceptance, list of primary/secondary conversions.
 @mcp_tool()
 def check_enhanced_conversions_status() -> str:
     """
@@ -885,7 +995,7 @@ def check_enhanced_conversions_status() -> str:
     res = check_conversions_func()
     return res.model_dump_json(indent=2)
 
-# [чтение] Определение минимального бюджетного порога для Demand Gen / Video кампаний в выбранной валюте через currency_constant.
+# [read] Minimum budget threshold for Demand Gen / Video campaigns in the chosen currency via currency_constant.
 @mcp_tool()
 def get_demand_gen_currency_floor(currency_code: str = "EUR") -> str:
     """
@@ -895,7 +1005,7 @@ def get_demand_gen_currency_floor(currency_code: str = "EUR") -> str:
     res = currency_floor_func(currency_code)
     return res.model_dump_json(indent=2)
 
-# [чтение] Аудит физического местоположения кликающих пользователей (user_location_view): поиск утечек бюджета вне DE/AT/FR/ES.
+# [read] Audit of the physical location of clicking users (user_location_view): find budget leaks outside the target countries.
 @mcp_tool()
 def audit_geo_physical_locations(days: int = 30) -> str:
     """
@@ -906,7 +1016,7 @@ def audit_geo_physical_locations(days: int = 30) -> str:
     res = geo_audit_func(days)
     return res.model_dump_json(indent=2)
 
-# [запись] Загрузка офлайн/серверных конверсий (например, оплата Stripe, заказ с витрины) в Google Ads через ConversionUploadService.
+# [write] Upload offline/server conversions (e.g. a payment, a storefront order) to Google Ads via ConversionUploadService.
 @mcp_tool()
 def upload_click_conversion(
     conversion_action_id: str,
@@ -944,7 +1054,7 @@ def upload_click_conversion(
     res = upload_conversions_func([item])
     return res.model_dump_json(indent=2)
 
-# [запись] Управление статусом цели конверсии (Primary vs Secondary) для оптимизации алгоритмов Smart Bidding.
+# [write] Manage the goal status of a conversion action (Primary vs Secondary) to steer Smart Bidding.
 @mcp_tool()
 def set_conversion_action_goal(
     conversion_action_id: str,
@@ -955,7 +1065,7 @@ def set_conversion_action_goal(
     """
     Updates a Google Ads conversion action's goal optimization status (Primary vs Secondary),
     serving status (ENABLED, PAUSED, HIDDEN, REMOVED), and inclusion in the Conversions metric.
-    Use this to set primary conversion actions for Smart Bidding optimization and demote legacy/secondary actions.
+    Use this to make the purchase on your own site Primary and demote a legacy purchase action to Secondary.
     """
     req, rejected = build_request(
         "set_conversion_action_goal",
@@ -970,7 +1080,7 @@ def set_conversion_action_goal(
     res = set_conversion_goal_func(req)
     return res.model_dump_json(indent=2)
 
-# [чтение] Получение официальных счетов-фактур (Invoices) и кредитовых нот Google Ads через InvoiceService и BillingSetup.
+# [read] Retrieve official invoices and credit notes of Google Ads via InvoiceService and BillingSetup.
 @mcp_tool()
 def get_google_ads_invoices(year: Optional[str] = None, month: Optional[str] = None) -> str:
     """
@@ -980,7 +1090,7 @@ def get_google_ads_invoices(year: Optional[str] = None, month: Optional[str] = N
     res = invoices_func(year, month)
     return res.model_dump_json(indent=2)
 
-# [чтение] Аудит связи аккаунта Google Ads с Google Merchant Center (ProductLink / ProductLinkInvitation).
+# [read] Audit of the link between the Google Ads account and Google Merchant Center (ProductLink / ProductLinkInvitation).
 @mcp_tool()
 def check_merchant_center_link(merchant_id: Optional[str] = None) -> str:
     """
@@ -988,7 +1098,33 @@ def check_merchant_center_link(merchant_id: Optional[str] = None) -> str:
     in Google Ads via ProductLink and ProductLinkInvitation resources.
     Verifies that the product catalog and feed are actively connected for Shopping and Performance Max.
     """
-    res = mc_link_func(merchant_id=merchant_id)
+    res = mc_link_func(merchant_id=merchant_id or MERCHANT_CENTER_ID or None)
+    return res.model_dump_json(indent=2)
+
+# [read] Shopping readiness on both sides: link, Shopping ads program in Merchant Center, feed label, approved products, what Google Ads sees, other Shopping campaigns. When Merchant Center cannot be read its checks are SKIPPED with a reason. Journal name: check_shopping_readiness (verdict and gmc_skipped_reason).
+@mcp_tool()
+def check_shopping_readiness(
+    merchant_id: Optional[str] = None,
+    feed_label: Optional[str] = None,
+    geo_target_constants: Optional[List[int]] = None,
+    custom_label_0_values: Optional[List[str]] = None
+) -> str:
+    """
+    Checks that a Shopping campaign on the Merchant Center feed has something to show, reading both accounts: the Ads <-> Merchant
+    Center link, the Shopping ads program for the countries (2276 Germany, 2040 Austria), the feed label, approved products per
+    country, the products Google Ads itself sees, and other Shopping campaigns on the same Merchant Center. custom_label_0_values:
+    values of g:custom_label_0 the campaign will select or leave out; each must exist in the catalog. Answer: verdict READY /
+    READY_WITH_WARNINGS / BLOCKED and a list of checks (OK / WARN / FAIL / SKIPPED). Reads only.
+    """
+    req, rejected = build_request(
+        "check_shopping_readiness", CheckShoppingReadinessRequest, action_type="READ",
+        **{key: value for key, value in (("merchant_id", merchant_id), ("feed_label", feed_label)) if value is not None},
+        **({"geo_target_constants": geo_target_constants} if geo_target_constants else {}),
+        custom_label_0_values=custom_label_0_values or []
+    )
+    if rejected:
+        return rejected
+    res = shopping_readiness_func(req)
     return res.model_dump_json(indent=2)
 
 if __name__ == "__main__":

@@ -10,6 +10,9 @@ __pycache__/
 *.pem
 *.key
 
+# Private business policy of your clone (identity and rules; see docs/POLICY.md)
+config/policy.local.json
+
 # Logs & Traces
 logs/*.log
 logs/*.jsonl

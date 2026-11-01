@@ -5,7 +5,7 @@ class GoogleAdGroupRecord(BaseModel):
     id: str = Field(..., description="Ad Group ID")
     resource_name: Optional[str] = Field(None, description="Resource name")
     campaign_id: str = Field(..., description="Parent Campaign ID")
-    name: str = Field(..., description="Ad Group Name (e.g. Core Products, Category A, Category B)")
+    name: str = Field(..., description="Ad Group Name (e.g. Category Alpha - Landing Category)")
     status: Literal["ENABLED", "PAUSED", "REMOVED"] = Field(..., description="Serving status")
     type: str = Field(default="SEARCH_STANDARD", description="Ad Group Type")
     cpc_bid_micros: int = Field(default=0, description="Base CPC bid in micros (e.g. 600000 = 0.60 EUR)")
@@ -27,6 +27,10 @@ class KeywordStatusUpdateRequest(BaseModel):
     ad_group_id: str = Field(..., pattern=r"^\d+$", description="Ad Group ID of the keyword")
     criterion_id: str = Field(..., pattern=r"^\d+$", description="Keyword criterion ID (from get_ad_group_keywords)")
     enabled: bool = Field(..., description="True to ENABLE, False to PAUSE")
+
+class AdGroupStatusUpdateRequest(BaseModel):
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Ad Group ID to pause or enable (from get_ad_groups)")
+    enabled: bool = Field(..., description="True to ENABLE the ad group, False to PAUSE it")
 
 class AdGroupKeywordRecord(BaseModel):
     criterion_id: str = Field(..., description="Criterion ID")

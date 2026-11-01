@@ -78,6 +78,7 @@ def list_campaign_ads(campaign_id: str, customer_id: str = CUSTOMER_ID) -> List[
         ))
     return results
 
+
 @handle_google_ads_errors
 def deploy_golden_rsa(req: DeployGoldenRSARequest, customer_id: str = CUSTOMER_ID) -> str:
     """
@@ -185,6 +186,7 @@ def deploy_golden_rsa(req: DeployGoldenRSARequest, customer_id: str = CUSTOMER_I
     response = aga_service.mutate_ad_group_ads(customer_id=customer_id, operations=[create_operation])
     new_ad_resource = response.results[-1].resource_name
     return f"Successfully created new Golden RSA {new_ad_resource} in AdGroup {req.ad_group_id} (15/4 Matrix + DKI)."
+
 
 @handle_google_ads_errors
 def update_ad_status(req: AdStatusUpdateRequest, customer_id: str = CUSTOMER_ID) -> str:

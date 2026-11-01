@@ -24,9 +24,9 @@ class KeywordVolumesRequest(BaseModel):
         for word in v:
             word = " ".join((word or "").split())
             if not word:
-                raise ValueError("Пустое слово в списке keywords")
+                raise ValueError("Empty word in the keywords list")
             if len(word) > MAX_KEYWORD_CHARS:
-                raise ValueError(f"Слово длиннее {MAX_KEYWORD_CHARS} символов: «{word[:40]}…»")
+                raise ValueError(f"Word longer than {MAX_KEYWORD_CHARS} characters: '{word[:40]}...'")
             if word.lower() not in seen:
                 seen.add(word.lower())
                 cleaned.append(word)
@@ -38,7 +38,7 @@ class KeywordVolumesRequest(BaseModel):
         codes = list(dict.fromkeys((c or "").strip().upper() for c in v))
         unknown = [c for c in codes if c not in COUNTRIES]
         if unknown:
-            raise ValueError(f"Неизвестные страны {unknown}; доступны: {', '.join(COUNTRIES)}")
+            raise ValueError(f"Unknown countries {unknown}; available: {', '.join(COUNTRIES)}")
         return codes
 
 class MonthVolume(BaseModel):

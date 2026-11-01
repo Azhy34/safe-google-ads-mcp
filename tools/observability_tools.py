@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shield import error_shield
 from shield.error_shield import handle_google_ads_errors, ServiceResult, ApiError, Telemetry, OBSERVER_FUNCTIONS
 from shield import cloud_sink
-from shield.cloud_sink import LOG_NAME, GOOGLE_ADS_GRPC_SERVICE_PREFIX, JOURNAL_SPAN_PREFIXES
+from shield.cloud_sink import LOG_NAME, GOOGLE_ADS_GRPC_SERVICE_PREFIX, JOURNAL_SPAN_PREFIXES, MERCHANT_API_SPAN_PREFIX
 from shield.models_observability import (
     CloudLogEntryRecord, CloudLogsSummary, TraceSpanRecord, TraceRecord,
     HealthFinding, FunctionHealth, ToolHealthReport
@@ -305,7 +305,7 @@ def get_cloud_trace(trace_id: str):
     raw = sorted(trace.spans, key=lambda s: s.start_time)
     t0 = raw[0].start_time if raw else None
     span_ids = {s.span_id for s in raw}
-    spans, api_calls, api_ms, journal_reads, journal_ms = [], 0, 0.0, 0, 0.0
+    spans, api_calls, api_ms, journal_reads, journal_ms, merchant_calls, merchant_ms = [], 0, 0.0, 0, 0.0, 0, 0.0
     for s in raw:
         duration = (s.end_time - s.start_time).total_seconds() * 1000
         if s.name.lstrip("/").startswith(GOOGLE_ADS_GRPC_SERVICE_PREFIX):
@@ -314,6 +314,9 @@ def get_cloud_trace(trace_id: str):
         elif s.name.startswith(JOURNAL_SPAN_PREFIXES):
             journal_reads += 1
             journal_ms += duration
+        elif s.name.startswith(MERCHANT_API_SPAN_PREFIX):
+            merchant_calls += 1
+            merchant_ms += duration
         spans.append(TraceSpanRecord(
             span_id=_hex_span(s.span_id),
             parent_span_id=_hex_span(s.parent_span_id) if s.parent_span_id in span_ids else None,
@@ -331,7 +334,9 @@ def get_cloud_trace(trace_id: str):
         google_ads_api_ms=round(api_ms, 1),
         journal_reads=journal_reads,
         journal_read_ms=round(journal_ms, 1),
-        own_code_ms=round(max(total - api_ms - journal_ms, 0.0), 1),
+        merchant_api_calls=merchant_calls,
+        merchant_api_ms=round(merchant_ms, 1),
+        own_code_ms=round(max(total - api_ms - journal_ms - merchant_ms, 0.0), 1),
         spans=spans,
         logs_url=explorer_url(project, f'trace="projects/{project}/traces/{trace_id}"'),
     )

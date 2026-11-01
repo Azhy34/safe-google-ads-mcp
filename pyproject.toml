@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "safe-google-ads-mcp"
-version = "1.0.0"
+version = "1.1.0"
 description = "Enterprise FastMCP server for Google Ads API with two-layer Pydantic shields, W3C distributed tracing, and zero-hallucination guardrails."
 readme = "README.md"
 authors = [{ name = "Mikhail-Azhyshchev", email = "azhyshchev@gmail.com" }]

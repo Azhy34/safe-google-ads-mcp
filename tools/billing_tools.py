@@ -79,7 +79,7 @@ def get_google_ads_invoices(
 
     notes: List[str] = []
     if not billing_setups:
-        notes.append("ℹ️ Настройки биллинга (BillingSetup) не найдены через поисковый запрос или доступ ограничен.")
+        notes.append("ℹ️ No billing setup (BillingSetup) found by the query, or access is limited.")
 
     # Determine months to query
     months_to_query: List[str] = []
@@ -88,7 +88,7 @@ def get_google_ads_invoices(
         if normalized_month:
             months_to_query = [normalized_month]
         else:
-            notes.append(f"⚠️ Неизвестный месяц '{month}'. Будут проверены актуальные месяцы.")
+            notes.append(f"⚠️ Unknown month '{month}'. The current months will be checked.")
             months_to_query = [datetime.now().strftime("%B").upper()]
     else:
         max_month = datetime.now().month if target_year == current_year else 12
@@ -145,12 +145,12 @@ def get_google_ads_invoices(
             except Exception as e:
                 err_msg = str(e)
                 if "NOT_FOUND" not in err_msg and "INVALID_ARGUMENT" not in err_msg:
-                    notes.append(f"Запрос инвойсов для {m} {target_year}: {err_msg[:120]}")
+                    notes.append(f"Invoice query for {m} {target_year}: {err_msg[:120]}")
 
     if invoices:
-        notes.append(f"✅ Найдено {len(invoices)} счетов-фактур на общую сумму {total_invoiced:.2f} EUR (НДС: {total_tax:.2f} EUR).")
+        notes.append(f"✅ Found {len(invoices)} invoices, {total_invoiced:.2f} EUR in total (VAT: {total_tax:.2f} EUR).")
     else:
-        notes.append(f"ℹ️ Счета-фактуры за {target_year} г. не найдены через InvoiceService (аккаунт может быть на автоматических платежах с карты/счета).")
+        notes.append(f"ℹ️ No invoices for {target_year} found via InvoiceService (the account may pay automatically by card or bank transfer).")
 
     return InvoicesResponse(
         customer_id=customer_id,
