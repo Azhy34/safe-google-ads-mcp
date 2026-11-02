@@ -7,6 +7,7 @@ from google.api_core import protobuf_helpers
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.client import get_ads_client, eur_to_micros
+from core import policy
 from core.config import CUSTOMER_ID
 from shield.error_shield import ServiceResult, handle_google_ads_errors
 from shield.models_campaign import (
@@ -310,7 +311,7 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
     """
     Creates a new Google Ads Search campaign with dedicated budget, Maximize Clicks (TARGET_SPEND)
     strategy with CPC ceiling, Clean Search network settings (Partners/Display OFF), geo/language criteria,
-    dayparting schedule (08:00 - 01:00), an initial ad group and clean phrase/exact keywords.
+    dayparting schedule (ads.schedule_windows of the policy), an initial ad group and clean phrase/exact keywords.
     """
     import time
     client = get_ads_client()
@@ -378,7 +379,7 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
         crit.language.language_constant = f"languageConstants/{lang_id}"
         crit_ops.append(op)
         
-    # Dayparting Schedule: 08:00 - 24:00 and 00:00 - 01:00 for Monday-Sunday
+    # Dayparting: the windows of ads.schedule_windows of the policy on every day of the week (none = all day)
     all_days = [
         client.enums.DayOfWeekEnum.MONDAY,
         client.enums.DayOfWeekEnum.TUESDAY,
@@ -389,27 +390,16 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
         client.enums.DayOfWeekEnum.SUNDAY,
     ]
     for d in all_days:
-        # Window 1: 08:00 - 24:00
-        op1 = client.get_type("CampaignCriterionOperation")
-        c1 = op1.create
-        c1.campaign = campaign_resource_name
-        c1.ad_schedule.day_of_week = d
-        c1.ad_schedule.start_hour = 8
-        c1.ad_schedule.start_minute = client.enums.MinuteOfHourEnum.ZERO
-        c1.ad_schedule.end_hour = 24
-        c1.ad_schedule.end_minute = client.enums.MinuteOfHourEnum.ZERO
-        crit_ops.append(op1)
-        
-        # Window 2: 00:00 - 01:00
-        op2 = client.get_type("CampaignCriterionOperation")
-        c2 = op2.create
-        c2.campaign = campaign_resource_name
-        c2.ad_schedule.day_of_week = d
-        c2.ad_schedule.start_hour = 0
-        c2.ad_schedule.start_minute = client.enums.MinuteOfHourEnum.ZERO
-        c2.ad_schedule.end_hour = 1
-        c2.ad_schedule.end_minute = client.enums.MinuteOfHourEnum.ZERO
-        crit_ops.append(op2)
+        for start_hour, end_hour in policy.schedule_windows():
+            op_window = client.get_type("CampaignCriterionOperation")
+            window = op_window.create
+            window.campaign = campaign_resource_name
+            window.ad_schedule.day_of_week = d
+            window.ad_schedule.start_hour = start_hour
+            window.ad_schedule.start_minute = client.enums.MinuteOfHourEnum.ZERO
+            window.ad_schedule.end_hour = end_hour
+            window.ad_schedule.end_minute = client.enums.MinuteOfHourEnum.ZERO
+            crit_ops.append(op_window)
         
     if crit_ops:
         crit_service.mutate_campaign_criteria(customer_id=customer_id, operations=crit_ops)

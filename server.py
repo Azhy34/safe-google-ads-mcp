@@ -225,7 +225,7 @@ def create_search_campaign(
     """
     Creates a new Google Ads Search campaign with dedicated budget, Maximize Clicks (TARGET_SPEND)
     strategy with CPC ceiling, Clean Search network settings (Partners/Display OFF), geo/language criteria,
-    dayparting schedule (08:00 - 01:00), an initial ad group and clean phrase/exact keywords.
+    dayparting schedule (ads.schedule_windows of the policy), an initial ad group and clean phrase/exact keywords.
     geo_target_constants and language_constants default to ads.default_geo and ads.default_language of the policy.
     """
     req, rejected = build_request(
@@ -260,7 +260,7 @@ def set_campaign_location(campaign_id: str, geo_target_id: int, enabled: bool) -
     res = update_location_func(req)
     return res.model_dump_json(indent=2)
 
-# [write] Create a Shopping campaign on the Merchant Center feed: always paused, Maximize Clicks with a ceiling, countries from the policy (shopping.default_geo), schedule 08:00-01:00, one ad group and a product ad. Products: only the chosen ones (offers) or the whole feed with an explicit all_products. check_shopping_readiness and a check of the offer IDs against the catalog run before anything is written.
+# [write] Create a Shopping campaign on the Merchant Center feed: always paused, Maximize Clicks with a ceiling, countries from the policy (shopping.default_geo), schedule from the policy (ads.schedule_windows), one ad group and a product ad. Products: only the chosen ones (offers) or the whole feed with an explicit all_products. check_shopping_readiness and a check of the offer IDs against the catalog run before anything is written.
 @mcp_tool()
 def create_shopping_campaign(
     name: str,
@@ -278,12 +278,12 @@ def create_shopping_campaign(
     Creates a Standard Shopping campaign that advertises the products of the Merchant Center feed (product cards: photo, price,
     title from the feed; no keywords, no texts). Always created PAUSED (enable with toggle_campaign_status after the owner's yes).
     Maximize Clicks with the CPC ceiling, Google search only, geo from shopping.default_geo of the policy (presence),
-    schedule 08:00-01:00, one ad group with one product ad. The name must start with shopping.name_prefix when the policy sets one.
+    schedule ads.schedule_windows of the policy, one ad group with one product ad. The name must start with shopping.name_prefix when the policy sets one.
     merchant_id, feed_label and ad_group_name default to the policy (account.merchant_center_id, account.feed_label,
     shopping.default_ad_group_name).
-    Which products is always a choice: offers = the offer_id of the products to advertise (e.g. ['WE-003-150x250', 'WE-003-muster']);
+    Which products is always a choice: offers = the offer_id of the products to advertise (e.g. ['SKU-100-L', 'SKU-100-S']);
     only they are advertised, each must exist in the catalog. all_products=True advertises the whole feed instead (never the default);
-    only then exclude_custom_label_0 leaves out products by g:custom_label_0 (e.g. ['muster']).
+    only then exclude_custom_label_0 leaves out products by g:custom_label_0 (e.g. ['clearance']).
     Before anything is written check_shopping_readiness's judgement must not be BLOCKED (link, Shopping ads program, feed label,
     approved products). dry_run=True runs all checks and builds the operations, and writes nothing.
     """

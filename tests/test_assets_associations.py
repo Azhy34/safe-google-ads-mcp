@@ -53,16 +53,16 @@ class FakeGoogleAds:
         self.queries = []
         self.customer_rows = [dict(asset=asset(1, "ExampleShop", text="ExampleShop"), field="BUSINESS_NAME")]
         self.campaign_rows = [
-            dict(campaign=(CAMPAIGN_A, "Site"), asset=asset(11, "sl1", link="Wald"), field="SITELINK"),
-            dict(campaign=(CAMPAIGN_A, "Site"), asset=asset(12, "sl2", link="Meer"), field="SITELINK"),
-            dict(campaign=(CAMPAIGN_B, "Other"), asset=asset(13, "sl3", link="Muster"), field="SITELINK"),
+            dict(campaign=(CAMPAIGN_A, "Site"), asset=asset(11, "sl1", link="Trail"), field="SITELINK"),
+            dict(campaign=(CAMPAIGN_A, "Site"), asset=asset(12, "sl2", link="Sea"), field="SITELINK"),
+            dict(campaign=(CAMPAIGN_B, "Other"), asset=asset(13, "sl3", link="Sale"), field="SITELINK"),
         ]
         self.group_rows = [
             dict(campaign=CAMPAIGN_A, group=(GROUP_1, "Group One"), asset=asset(21, "wide", width=1200, height=628), field="AD_IMAGE"),
             dict(campaign=CAMPAIGN_A, group=(GROUP_1, "Group One"), asset=asset(22, "square", width=1024, height=1024), field="AD_IMAGE"),
             dict(campaign=CAMPAIGN_A, group=(GROUP_2, "Group Two"), asset=asset(23, "other", width=1200, height=628), field="AD_IMAGE"),
             dict(campaign=CAMPAIGN_B, group=(GROUP_3, "Group Three"), asset=asset(24, "foreign", width=300, height=300), field="AD_IMAGE"),
-            dict(campaign=CAMPAIGN_A, group=(GROUP_1, "Group One"), asset=asset(25, "group sitelink", link="Dschungel"), field="SITELINK"),
+            dict(campaign=CAMPAIGN_A, group=(GROUP_1, "Group One"), asset=asset(25, "group sitelink", link="Road"), field="SITELINK"),
         ]
         self.ga_service = mock.MagicMock()
         self.ga_service.search.side_effect = self._search
@@ -156,7 +156,7 @@ class AssetAssociationsTests(unittest.TestCase):
         fake = FakeGoogleAds()
         result = self.run_tool(fake, campaign_id=CAMPAIGN_A, field_type="SITELINK", level="CAMPAIGN")
         self.assertEqual(len(fake.queries), 1)
-        self.assertEqual([r.asset_text for r in result.data], ["Wald", "Meer"])
+        self.assertEqual([r.asset_text for r in result.data], ["Trail", "Sea"])
         self.assertTrue(all(r.asset_size is None for r in result.data))          # a text asset has no pixel size
 
     def test_level_and_field_type_are_upper_cased(self):

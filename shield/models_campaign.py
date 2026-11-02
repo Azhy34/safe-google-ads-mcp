@@ -40,7 +40,7 @@ class CampaignTargetingRecord(BaseModel):
     targeted_locations: list[str] = Field(default_factory=list, description="Targeted geo constants (e.g. Germany 2276, Austria 2040)")
     excluded_locations: list[str] = Field(default_factory=list, description="Excluded geo constants")
     targeted_languages: list[str] = Field(default_factory=list, description="Targeted language constants (e.g. German 1001)")
-    ad_schedules: list[str] = Field(default_factory=list, description="Dayparting ad schedules (e.g. 08:00 - 01:00)")
+    ad_schedules: list[str] = Field(default_factory=list, description="Dayparting ad schedules (e.g. 08:00 - 24:00)")
     device_modifiers: list[str] = Field(default_factory=list, description="Device bid adjustments")
 
 class ChangeEventRecord(BaseModel):

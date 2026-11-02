@@ -6,11 +6,102 @@
     "merchant_center_id": "",
     "feed_label": "",
     "merchant_service_account": "",
-    "planner_fallback": { "login_customer_id": "", "customer_id": "" }
+    "planner_fallback": {
+      "login_customer_id": "",
+      "customer_id": ""
+    }
   },
-  "ads": { "url_rules": [], "display_paths": ["Shop", "Sale"], "default_geo": [], "default_language": [], "priority_campaign_marker": "" },
-  "site": { "allowed_hosts": [], "forbidden_terms": [], "asset_name_prefix": "Site image" },
-  "shopping": { "name_prefix": "", "default_geo": [2276], "default_ad_group_name": "All products" },
-  "geo": { "target_country_codes": [], "allowed_target_ids": [] },
-  "promotion": { "default_code": "" }
+  "ads": {
+    "url_rules": [],
+    "display_paths": [
+      "Shop",
+      "Sale"
+    ],
+    "default_geo": [],
+    "default_language": [],
+    "priority_campaign_marker": "",
+    "schedule_windows": []
+  },
+  "site": {
+    "allowed_hosts": [],
+    "forbidden_terms": [],
+    "asset_name_prefix": "Site image"
+  },
+  "shopping": {
+    "name_prefix": "",
+    "default_geo": [
+      2276
+    ],
+    "default_ad_group_name": "All products"
+  },
+  "geo": {
+    "target_country_codes": [],
+    "allowed_target_ids": []
+  },
+  "promotion": {
+    "default_code": ""
+  },
+  "negatives": {
+    "packs": {
+      "de": [
+        "amazon",
+        "ebay",
+        "aliexpress",
+        "temu",
+        "shein",
+        "kostenlos",
+        "gratis",
+        "umsonst",
+        "selber machen",
+        "diy",
+        "anleitung",
+        "test",
+        "erfahrung",
+        "bewertung",
+        "forum",
+        "youtube",
+        "video",
+        "pdf",
+        "gebraucht",
+        "jobs",
+        "stellenangebot"
+      ],
+      "fr": [
+        "amazon",
+        "ebay",
+        "aliexpress",
+        "temu",
+        "shein",
+        "gratuit",
+        "pas cher",
+        "diy",
+        "tuto",
+        "avis",
+        "forum",
+        "youtube",
+        "video",
+        "pdf",
+        "occasion",
+        "emploi"
+      ],
+      "es": [
+        "amazon",
+        "ebay",
+        "aliexpress",
+        "temu",
+        "shein",
+        "gratis",
+        "barato",
+        "diy",
+        "tutorial",
+        "opiniones",
+        "foro",
+        "youtube",
+        "video",
+        "pdf",
+        "segunda mano",
+        "empleo"
+      ]
+    }
+  }
 }

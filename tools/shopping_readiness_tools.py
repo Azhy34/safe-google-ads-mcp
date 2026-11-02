@@ -26,7 +26,8 @@ from shield.error_shield import handle_google_ads_errors
 from shield.models_shopping import CheckShoppingReadinessRequest, ReadinessCheck, ShoppingReadinessResponse
 from shield.telemetry import note_journal
 
-GEO_COUNTRIES = {2276: "DE", 2040: "AT"}  # geo target -> Merchant Center country code
+GEO_COUNTRIES = {2276: "DE", 2040: "AT", 2756: "CH", 2250: "FR", 2380: "IT", 2724: "ES", 2528: "NL", 2056: "BE", 2616: "PL",
+                 2826: "GB", 2840: "US", 2124: "CA", 2036: "AU"}  # geo target -> Merchant Center country code
 PENDING_INVITATIONS = ("REQUESTED", "PENDING_APPROVAL")
 MAX_LISTED = 5
 

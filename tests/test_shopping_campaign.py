@@ -38,10 +38,10 @@ from tools.shopping_tools import (
 NAME = "ExampleShop Shopping DE - Site"
 CID = "1"
 # What Google Ads lists for the feed, spelled as Google Ads spells it (here deliberately unlike the request, to show that its spelling
-# wins; live it is the feed's own, WE-003-150x250). (Before a Shopping campaign includes
+# wins; live it is the feed's own, SKU-003-L). (Before a Shopping campaign includes
 # the products it lists every one of them as NOT_ELIGIBLE, seen live 31.10.2026: the tool must not read anything into that status.)
-CATALOG = ["we-003-muster", "we-003-150x250", "we-003-200x200", "we-001-muster"]
-SELECTION = ["WE-003-muster", "WE-003-150x250", "WE-003-200x200"]
+CATALOG = ["sku-003-clearance", "sku-003-L", "sku-003-M", "sku-001-clearance"]
+SELECTION = ["SKU-003-clearance", "SKU-003-L", "SKU-003-M"]
 
 
 def gmc_product(offer, state="APPROVED"):
@@ -51,7 +51,7 @@ def gmc_product(offer, state="APPROVED"):
         {"reportingContext": "FREE_LISTINGS", "approvedCountries": ["DE"]}, {"reportingContext": "SHOPPING_ADS", key: ["DE"]}]}}
 
 
-GMC_CATALOG = [gmc_product(offer) for offer in (*SELECTION, "WE-001-muster")]
+GMC_CATALOG = [gmc_product(offer) for offer in (*SELECTION, "SKU-001-clearance")]
 
 
 def real_client():
@@ -87,8 +87,8 @@ class ModelTests(unittest.TestCase):
                     {"cpc_ceiling_eur": 0.05}, {"cpc_ceiling_eur": 5},
                     {"merchant_id": "abc"}, {"feed_label": "bad label!"},
                     {"geo_target_constants": []}, {"campaign_priority": 3},
-                    {"exclude_custom_label_0": ["Muster; x"]},
-                    {"offers": ["WE 003; DROP"]}, {"offers": ["x" * 61]}, {"offers": [f"WE-{n}" for n in range(101)]}):
+                    {"exclude_custom_label_0": ["Clearance; x"]},
+                    {"offers": ["WE 003; DROP"]}, {"offers": ["x" * 61]}, {"offers": [f"SKU-{n}" for n in range(101)]}):
             with self.assertRaises(ValidationError, msg=str(bad)):
                 request(**bad)
 
@@ -96,16 +96,16 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as caught:                       # the whole feed is never the default
             CreateShoppingCampaignRequest(name=NAME)
         self.assertIn("never the default", str(caught.exception))
-        for bad in ({"offers": ["WE-003-muster"], "all_products": True},        # either a selection or the whole feed
-                    {"offers": ["WE-003-muster"], "exclude_custom_label_0": ["muster"]}):
+        for bad in ({"offers": ["SKU-003-clearance"], "all_products": True},        # either a selection or the whole feed
+                    {"offers": ["SKU-003-clearance"], "exclude_custom_label_0": ["clearance"]}):
             with self.assertRaises(ValidationError, msg=str(bad)):
                 CreateShoppingCampaignRequest(name=NAME, **bad)
 
     def test_exclusion_values_are_normalised(self):
-        self.assertEqual(request(exclude_custom_label_0=[" Muster ", "muster", "Probe"]).exclude_custom_label_0, ["muster", "probe"])
+        self.assertEqual(request(exclude_custom_label_0=[" Clearance ", "clearance", "Probe"]).exclude_custom_label_0, ["clearance", "probe"])
 
     def test_offers_are_trimmed_and_deduplicated_without_regard_to_case(self):
-        self.assertEqual(request(offers=[" WE-003-muster ", "we-003-MUSTER", "WE-003-150x250"]).offers, ["WE-003-muster", "WE-003-150x250"])
+        self.assertEqual(request(offers=[" SKU-003-clearance ", "sku-003-CLEARANCE", "SKU-003-L"]).offers, ["SKU-003-clearance", "SKU-003-L"])
 
     def test_the_tool_is_a_mutation_and_is_registered(self):
         self.assertIn("create_shopping_campaign", MUTATION_FUNCTIONS)
@@ -187,12 +187,12 @@ class ListingTreeTests(unittest.TestCase):
         self.assertEqual(node.ad_group, "customers/1/adGroups/77")
 
     def test_with_exclusions_a_subdivision_leaves_the_value_out_and_keeps_everything_else(self):
-        ops = build_listing_tree_operations(self.client, CID, "77", request(exclude_custom_label_0=["muster"]))
+        ops = build_listing_tree_operations(self.client, CID, "77", request(exclude_custom_label_0=["clearance"]))
         root, excluded, rest = (op.create for op in ops)
         self.assertEqual(self.kind(root), "SUBDIVISION")
         self.assertEqual(root.resource_name, "customers/1/adGroupCriteria/77~-4")
         self.assertTrue(excluded.negative)
-        self.assertEqual(excluded.listing_group.case_value.product_custom_attribute.value, "muster")
+        self.assertEqual(excluded.listing_group.case_value.product_custom_attribute.value, "clearance")
         self.assertEqual(self.client.enums.ProductCustomAttributeIndexEnum(excluded.listing_group.case_value.product_custom_attribute.index).name, "INDEX0")
         self.assertEqual(excluded.listing_group.parent_ad_group_criterion, root.resource_name)
         self.assertFalse(rest.negative)                                            # everything else is advertised
@@ -210,7 +210,7 @@ class ListingTreeTests(unittest.TestCase):
 
     def test_every_temporary_id_of_the_request_is_used_once(self):
         # Google refuses a repeated temporary ID whatever the resource (DUPLICATE_TEMP_IDS, seen live 31.10.2026: the tree root reused the budget's -1)
-        for req, item_ids in ((request(offers=SELECTION), ["a", "b", "c"]), (request(exclude_custom_label_0=["muster"]), [])):
+        for req, item_ids in ((request(offers=SELECTION), ["a", "b", "c"]), (request(exclude_custom_label_0=["clearance"]), [])):
             tree = build_listing_tree_operations(self.client, CID, "-3", req, item_ids)
             operations = build_campaign_operations(self.client, CID, req) + [criterion_as_mutate_operation(self.client, op) for op in tree]
             kinds = ("campaign_budget_operation", "campaign_operation", "ad_group_operation", "ad_group_criterion_operation")
@@ -221,7 +221,7 @@ class ListingTreeTests(unittest.TestCase):
             self.assertEqual(len(set(temp_ids)), 4, temp_ids)
 
     def test_a_selection_advertises_the_offers_and_leaves_everything_else_out(self):
-        ids = ["we-003-muster", "we-003-150x250", "we-003-200x200"]
+        ids = ["sku-003-clearance", "sku-003-L", "sku-003-M"]
         ops = build_listing_tree_operations(self.client, CID, "77", request(offers=SELECTION), ids)
         root, *items, rest = (op.create for op in ops)
         self.assertEqual((self.kind(root), root.resource_name), ("SUBDIVISION", "customers/1/adGroupCriteria/77~-4"))
@@ -378,7 +378,7 @@ class ToolTests(unittest.TestCase):
         client, ga, state = self.make()
         result = self.run_tool(client, offers=SELECTION, dry_run=True, budget_eur=2.0)
         self.assertTrue(result.success)
-        self.assertIn("only 3 offer(s) (we-003-muster, we-003-150x250, we-003-200x200)", result.data)   # as Google Ads spells them
+        self.assertIn("only 3 offer(s) (sku-003-clearance, sku-003-L, sku-003-M)", result.data)   # as Google Ads spells them
         self.assertIn("found in google_ads+merchant_center", result.data)
         self.assertIn("2.00 EUR a day", result.data)
         self.assertIn("24 operations (19 for the campaign, 5 for the product tree)", result.data)      # root, 3 offers, everything else
@@ -390,7 +390,7 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.success)
         tree = self.tree_of(self.written(state)[0], 5)
         self.assertEqual([node.listing_group.case_value.product_item_id.value for node in tree[1:4]],
-                         ["we-003-muster", "we-003-150x250", "we-003-200x200"])
+                         ["sku-003-clearance", "sku-003-L", "sku-003-M"])
         self.assertTrue(tree[4].negative)
         self.assertIn("Google Ads lists 3 product(s) for the ad group: ELIGIBLE 3", result.data)
 
@@ -416,19 +416,19 @@ class ToolTests(unittest.TestCase):
 
     def test_an_offer_the_catalog_does_not_have_is_refused(self):
         client, ga, state = self.make()
-        result = self.run_tool(client, offers=["WE-003-150x250", "WE-003-150x25O"], gmc=[gmc_product("WE-003-150x250")])   # a letter O for a zero
+        result = self.run_tool(client, offers=["SKU-003-L", "SKU-003-150x25O"], gmc=[gmc_product("SKU-003-L")])   # a letter O for a zero
         self.assertFalse(result.success)
         self.assertEqual((result.error.code, result.error.field_path), ("OFFER_NOT_FOUND", ["offers"]))
-        self.assertIn("WE-003-150x25O", result.error.message)
+        self.assertIn("SKU-003-150x25O", result.error.message)
         self.assertEqual(state["mutates"], [])
 
     def test_an_offer_merchant_center_disapproved_is_refused(self):
         client, ga, state = self.make()
-        result = self.run_tool(client, offers=["WE-003-muster", "WE-001-muster"],
-                               gmc=[gmc_product("WE-003-muster"), gmc_product("WE-001-muster", "DISAPPROVED")])
+        result = self.run_tool(client, offers=["SKU-003-clearance", "SKU-001-clearance"],
+                               gmc=[gmc_product("SKU-003-clearance"), gmc_product("SKU-001-clearance", "DISAPPROVED")])
         self.assertFalse(result.success)
         self.assertEqual(result.error.code, "OFFER_NOT_ELIGIBLE")
-        self.assertIn("Merchant Center disapproved WE-001-muster", result.error.message)
+        self.assertIn("Merchant Center disapproved SKU-001-clearance", result.error.message)
         self.assertEqual(state["mutates"], [])
 
     def test_the_google_ads_status_is_not_read_as_a_verdict_on_the_product(self):
@@ -441,9 +441,9 @@ class ToolTests(unittest.TestCase):
     def test_an_offer_waiting_for_its_first_review_is_allowed_and_said(self):
         client, ga, state = self.make()
         result = self.run_tool(client, offers=SELECTION, dry_run=True,
-                               gmc=[gmc_product("WE-003-muster", "PENDING"), gmc_product("WE-003-150x250"), gmc_product("WE-003-200x200")])
+                               gmc=[gmc_product("SKU-003-clearance", "PENDING"), gmc_product("SKU-003-L"), gmc_product("SKU-003-M")])
         self.assertTrue(result.success)
-        self.assertIn("waiting for the first review in Merchant Center, they show once approved: WE-003-muster", result.data)
+        self.assertIn("waiting for the first review in Merchant Center, they show once approved: SKU-003-clearance", result.data)
 
     def test_when_merchant_center_is_silent_the_offers_go_through_with_a_note(self):
         client, ga, state = self.make()
@@ -453,9 +453,9 @@ class ToolTests(unittest.TestCase):
 
     def test_when_google_ads_lists_nothing_yet_the_merchant_center_catalog_is_used(self):
         client, ga, state = self.make(catalog=[])
-        result = self.run_tool(client, offers=["WE-003-muster", "we-003-150x250"], dry_run=True)
+        result = self.run_tool(client, offers=["SKU-003-clearance", "sku-003-L"], dry_run=True)
         self.assertTrue(result.success)
-        self.assertIn("only 2 offer(s) (WE-003-muster, WE-003-150x250), found in merchant_center", result.data)   # the catalog's own spelling
+        self.assertIn("only 2 offer(s) (SKU-003-clearance, SKU-003-L), found in merchant_center", result.data)   # the catalog's own spelling
 
     def test_when_nothing_can_list_the_catalog_nothing_is_created(self):
         client, ga, state = self.make(catalog=[])

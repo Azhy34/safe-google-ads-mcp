@@ -38,6 +38,16 @@
         ],
         "message": "SITE STANDARDS: example-shop.test sells at direct prices; no coupon in its ads"
       }
+    ],
+    "schedule_windows": [
+      [
+        8,
+        24
+      ],
+      [
+        0,
+        1
+      ]
     ]
   },
   "site": {
@@ -78,5 +88,23 @@
   },
   "promotion": {
     "default_code": "SAVE10"
+  },
+  "negatives": {
+    "packs": {
+      "de": [
+        "amazon",
+        "ebay",
+        "kostenlos",
+        "diy"
+      ],
+      "fr": [
+        "amazon",
+        "gratuit"
+      ],
+      "es": [
+        "amazon",
+        "gratis"
+      ]
+    }
   }
 }

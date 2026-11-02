@@ -3,7 +3,7 @@ Which products a Shopping campaign advertises: the owner's list of offer IDs, ch
 
 A product tree that names an offer ID the catalog does not have is valid for Google and simply matches nothing, so a typo
 would become an empty campaign. The IDs are therefore resolved first, against what Google Ads itself lists
-(shopping_product: the IDs are spelled there as in the feed, seen live 31.10.2026: WE-003-150x250) and against the Merchant Center catalog.
+(shopping_product: the IDs are spelled there as in the feed: SKU-100-L) and against the Merchant Center catalog.
 An ID that neither knows is refused.
 
 Whether a product can show is read from Merchant Center (approved, waiting for the first review, disapproved for the

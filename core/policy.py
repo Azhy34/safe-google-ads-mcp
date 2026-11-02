@@ -33,7 +33,9 @@ DEFAULTS: Dict[str, Any] = {
         "merchant_service_account": "",
         "planner_fallback": {"login_customer_id": "", "customer_id": ""},
     },
-    "ads": {"url_rules": [], "display_paths": ["Shop", "Sale"], "default_geo": [], "default_language": [], "priority_campaign_marker": ""},
+    "ads": {"url_rules": [], "display_paths": ["Shop", "Sale"], "default_geo": [], "default_language": [], "priority_campaign_marker": "",
+            "schedule_windows": []},
+    "negatives": {"packs": {}},
     "site": {"allowed_hosts": [], "forbidden_terms": [], "asset_name_prefix": "Site image"},
     "shopping": {"name_prefix": "", "default_geo": [2276], "default_ad_group_name": "All products"},
     "geo": {"target_country_codes": [], "allowed_target_ids": []},
@@ -69,7 +71,8 @@ def _merge(base: Dict[str, Any], extra: Dict[str, Any], where: str = "") -> Dict
         if isinstance(base[key], dict):
             if not isinstance(value, dict):
                 raise PolicyError(f"policy key '{where}{key}' must be an object")
-            merged[key] = _merge(base[key], value, f"{where}{key}.")
+            # an empty default object is a free-form map (negatives.packs: language code -> words), checked in _check
+            merged[key] = copy.deepcopy(value) if not base[key] else _merge(base[key], value, f"{where}{key}.")
         else:
             if not isinstance(value, type(base[key])):
                 raise PolicyError(f"policy key '{where}{key}' must be {type(base[key]).__name__}")
@@ -87,6 +90,13 @@ def _check(policy: Dict[str, Any]) -> None:
     for name in ("default_geo", "default_language"):
         if not all(isinstance(item, int) and item > 0 for item in policy["ads"][name]):
             raise PolicyError(f"ads.{name} must be a list of geo/language constant IDs")
+    for window in policy["ads"]["schedule_windows"]:
+        if (not isinstance(window, list) or len(window) != 2 or not all(isinstance(h, int) for h in window)
+                or not 0 <= window[0] < window[1] <= 24):
+            raise PolicyError("ads.schedule_windows must be a list of [start_hour, end_hour] with 0 <= start < end <= 24")
+    for language, words in policy["negatives"]["packs"].items():
+        if not isinstance(language, str) or not isinstance(words, list) or not all(isinstance(w, str) and w.strip() for w in words):
+            raise PolicyError("negatives.packs must map a language code to a list of words")
     paths = policy["ads"]["display_paths"]
     if len(paths) != 2 or not all(isinstance(item, str) and 0 < len(item) <= 15 for item in paths):
         raise PolicyError("ads.display_paths must be two texts of 1 to 15 characters (the two display URL paths of an RSA)")
@@ -191,6 +201,16 @@ def display_paths() -> Tuple[str, str]:
     """The two default display URL paths of an RSA (path1, path2) when the call does not name them."""
     first, second = _load()["ads"]["display_paths"]
     return first, second
+
+
+def schedule_windows() -> List[Tuple[int, int]]:
+    """Daily ad schedule windows (start hour, end hour) applied to every day of the week; [] = no schedule, all day."""
+    return [(start, end) for start, end in _load()["ads"]["schedule_windows"]]
+
+
+def negative_pack(language: str) -> List[str]:
+    """The negative keyword pack of a language (negatives.packs); [] when the policy has none."""
+    return list(_load()["negatives"]["packs"].get(language.lower(), []))
 
 
 def site_hosts() -> Tuple[str, ...]:

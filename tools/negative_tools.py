@@ -15,39 +15,7 @@ from shield.models_criterion import (
     SyncSharedNegativeListRequest, SharedNegativeListResponse
 )
 
-# E-Commerce Verified Negative Shields
-NEGATIVE_SHIELDS = {
-    "de": [
-        "obi", "bauhaus", "hornbach", "toom", "hagebau", "tedox", "ikea", "roller",
-        "poco", "amazon", "ebay", "aliexpress", "temu", "shein",
-        "kostenlos", "gratis", "umsonst", "free", "selber machen", "diy",
-        "anleitung", "test", "stiftung warentest", "erfahrung", "bewertung",
-        "forum", "youtube", "video", "pdf", "drucken", "ausdrucken",
-        "malvorlage", "ausmalbild", "schablone", "vektorgrafik", "clipart",
-        "wandtattoo", "wandsticker", "aufkleber", "wandleuchte", "lampe",
-        "poster", "leinwand", "bild", "bilder", "teppich", "bettwäsche",
-        "vorhang", "gardine", "möbel", "bett", "wickelkommode",
-        "erwachsene", "wohnzimmer", "schlafzimmer", "küche", "bad", "flur"
-    ],
-    "fr": [
-        "leroy merlin", "castorama", "brico depot", "bricorama", "ikea", "amazon",
-        "cdiscount", "aliexpress", "temu", "shein", "action",
-        "gratuit", "pas cher", "discount", "promo", "solde", "occasion",
-        "diy", "tuto", "comment poser", "avis", "forum", "youtube", "video",
-        "sticker", "stickers", "autocollant", "affiche", "poster", "tableau",
-        "lampe", "veilleuse", "rideau", "tapis", "lit",
-        "adulte", "salon", "chambre adulte", "cuisine", "salle de bain"
-    ],
-    "es": [
-        "leroy merlin", "bricomart", "obramat", "bauhaus", "ikea", "amazon",
-        "aliexpress", "temu", "shein", "wallapop", "milanuncios",
-        "gratis", "barato", "economico", "descuento", "oferta", "segunda mano",
-        "diy", "tutorial", "como poner", "opiniones", "foro", "youtube", "video",
-        "vinilo", "pegatina", "sticker", "poster", "lamina", "cuadro",
-        "lampara", "cortina", "alfombra", "cama",
-        "adulto", "salon", "dormitorio matrimonio", "cocina", "baño"
-    ]
-}
+# Negative keyword packs come from the business policy (negatives.packs, one list per language code), see docs/POLICY.md
 
 @handle_google_ads_errors
 def apply_negative_shield(req: ApplyNegativeShieldRequest, customer_id: str = CUSTOMER_ID) -> str:
@@ -72,7 +40,9 @@ def apply_negative_shield(req: ApplyNegativeShieldRequest, customer_id: str = CU
             existing_words.add(row.campaign_criterion.keyword.text.lower())
             
     # 2. Gather target words
-    shield_words = NEGATIVE_SHIELDS.get(req.language.lower(), [])
+    shield_words = policy.negative_pack(req.language)
+    if not shield_words and not req.negative_words:
+        raise ValueError(f"no negative pack for language '{req.language}': set negatives.packs.{req.language.lower()} in the policy (docs/POLICY.md) or pass negative_words")
     custom_words = req.negative_words or []
     all_target_words = shield_words + custom_words
     

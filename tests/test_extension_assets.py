@@ -27,8 +27,8 @@ from shield.models_asset import CreateCalloutAssetsRequest, CreateStructuredSnip
 from tools.asset_tools import create_callout_assets, create_structured_snippet_asset
 
 CAMPAIGN = "2000000001"
-CALLOUTS = ["Kostenloser Versand", "Paste the Wall", "Muster für 16,50 €", "Hergestellt in der EU"]
-SNIPPET_VALUES = ["Wald", "Dschungel", "Weltraum"]
+CALLOUTS = ["Free shipping", "Easy returns", "Samples from 16.50 EUR", "Made in the EU"]
+SNIPPET_VALUES = ["Trail", "Road", "Track"]
 
 
 class AuditLogCase(unittest.TestCase):
@@ -52,13 +52,13 @@ class AuditLogCase(unittest.TestCase):
 
 class ContractTests(unittest.TestCase):
     def test_callouts_reject_length_forbidden_words_and_duplicates(self):
-        CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["  Versand  ", "Muster"])
+        CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["  Shipping  ", "Sale"])
         with self.assertRaises(ValidationError):
-            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["x" * 26, "Muster"])
+            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["x" * 26, "Sale"])
         with self.assertRaises(ValidationError):
-            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Marketplace Shop", "Muster"])
+            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Marketplace Shop", "Sale"])
         with self.assertRaises(ValidationError):
-            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Wald", "wald"])
+            CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Trail", "trail"])
         with self.assertRaises(ValidationError):
             CreateCalloutAssetsRequest(campaign_id=CAMPAIGN, callouts=["Nur eins"])
         self.assertIn("create_callout_assets", MUTATION_FUNCTIONS)
@@ -70,14 +70,14 @@ class ContractTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header=bad, values=SNIPPET_VALUES)
         with self.assertRaises(ValidationError):
-            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["Wald", "Dschungel"])
+            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["Trail", "Road"])
         with self.assertRaises(ValidationError):
-            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["peel & stick", "Wald", "Meer"])
+            CreateStructuredSnippetAssetRequest(campaign_id=CAMPAIGN, header="Typen", values=["peel & stick", "Trail", "Sea"])
         self.assertIn("create_structured_snippet_asset", MUTATION_FUNCTIONS)
 
     def test_a_bad_callout_is_rejected_before_google(self):
         _req, rejected = build_request("create_callout_assets", CreateCalloutAssetsRequest, action_type="MUTATION",
-                                       campaign_id=CAMPAIGN, callouts=["save10 gilt", "Muster"])
+                                       campaign_id=CAMPAIGN, callouts=["save10 gilt", "Sale"])
         self.assertIsNone(_req)
         self.assertIn("REQUEST_REJECTED", rejected)
 
@@ -195,7 +195,7 @@ class SnippetTests(AuditLogCase):
         self.assertIn("created 1 new asset(s)", result.data)
 
     def test_reuses_the_same_header_and_value_set_ignoring_order_and_case(self):
-        ads = FakeAds(assets=[row_snippet(333, "Typen", ["weltraum", "Wald", "Dschungel"])])
+        ads = FakeAds(assets=[row_snippet(333, "Typen", ["track", "Trail", "Road"])])
         result = self.create(ads)
         self.assertTrue(result.success)
         ads.assets_svc.mutate_assets.assert_not_called()
@@ -211,7 +211,7 @@ class SnippetTests(AuditLogCase):
         self.assertIn("already linked [333]", result.data)
 
     def test_a_different_value_set_for_the_same_header_writes_nothing(self):
-        ads = FakeAds(linked=[row_linked(333, "Typen", ["Meer", "Berge", "Wiese"])])
+        ads = FakeAds(linked=[row_linked(333, "Typen", ["Sea", "Hills", "Meadow"])])
         result = self.create(ads)
         self.assertFalse(result.success)
         self.assertEqual(result.error.code, "HEADER_ALREADY_ON_CAMPAIGN")

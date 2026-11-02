@@ -54,7 +54,7 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
     def test_valid_request_with_defaults(self):
         req = CreateSearchCampaignRequest(
             name="ExampleShop Search DE - Site Alpha",
-            ad_group_name="Fototapete Wald - Landing Category"
+            ad_group_name="Trail Shoes - Landing Category"
         )
         self.assertEqual(req.name, "ExampleShop Search DE - Site Alpha")
         self.assertEqual(req.budget_eur, 3.0)
@@ -67,9 +67,9 @@ class CreateSearchCampaignContractTests(unittest.TestCase):
     def test_custom_language_ab_test_request(self):
         req = CreateSearchCampaignRequest(
             name="ExampleShop Search DE - Site Alpha EN Expat",
-            ad_group_name="Alpha Wallpaper - Expats",
+            ad_group_name="Alpha Shoes - Expats",
             language_constants=[1001, 1000],
-            keywords=["[alpha wallpaper]", "\"nursery wallpaper\""]
+            keywords=["[alpha shoes]", "\"kids shoes\""]
         )
         self.assertEqual(req.language_constants, [1001, 1000])
         self.assertEqual(len(req.keywords), 2)
@@ -139,11 +139,11 @@ class CreateSearchCampaignExecutionTests(AuditLogCase):
 
         req = CreateSearchCampaignRequest(
             name="ExampleShop Search DE - Site Alpha",
-            ad_group_name="Fototapete Wald - Landing Category",
+            ad_group_name="Trail Shoes - Landing Category",
             budget_eur=3.0,
             cpc_ceiling_eur=0.55,
             status="PAUSED",
-            keywords=["[fototapete wald kinderzimmer]", "\"tapete kinderzimmer wald\""]
+            keywords=["[trail running shoes]", "\"running shoes trail\""]
         )
 
         res = create_search_campaign(req)

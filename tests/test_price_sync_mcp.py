@@ -64,11 +64,11 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
         req = SyncPriceExtensionRequest(
             entity_id="2000000003",
             level="CAMPAIGN",
-            name="Alpha Preise Test",
+            name="Alpha Prices Test",
             offerings=[
-                PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
-                PriceOfferingItem(header="200x250 cm", description="Vliestapete", price_eur=199.00, final_url="https://example.com/2"),
-                PriceOfferingItem(header="250x250 cm", description="Vliestapete", price_eur=249.00, final_url="https://example.com/3"),
+                PriceOfferingItem(header="150 cm", description="Leather Shoes", price_eur=149.00, final_url="https://example.com/1"),
+                PriceOfferingItem(header="200 cm", description="Leather Shoes", price_eur=199.00, final_url="https://example.com/2"),
+                PriceOfferingItem(header="250 cm", description="Leather Shoes", price_eur=249.00, final_url="https://example.com/3"),
             ]
         )
         self.assertEqual(req.entity_id, "2000000003")
@@ -84,8 +84,8 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
                 entity_id="2000000003",
                 name="Too few offerings",
                 offerings=[
-                    PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
-                    PriceOfferingItem(header="200x250 cm", description="Vliestapete", price_eur=199.00, final_url="https://example.com/2"),
+                    PriceOfferingItem(header="150 cm", description="Leather Shoes", price_eur=149.00, final_url="https://example.com/1"),
+                    PriceOfferingItem(header="200 cm", description="Leather Shoes", price_eur=199.00, final_url="https://example.com/2"),
                 ]
             )
         errors = ctx.exception.errors()
@@ -93,7 +93,7 @@ class SyncPriceExtensionContractTests(unittest.TestCase):
 
     def test_rejects_over_8_offerings(self):
         items = [
-            PriceOfferingItem(header=f"Tier {i}", description="Vliestapete", price_eur=100.0 + i, final_url="https://example.com")
+            PriceOfferingItem(header=f"Tier {i}", description="Leather Shoes", price_eur=100.0 + i, final_url="https://example.com")
             for i in range(9)
         ]
         with self.assertRaises(ValidationError) as ctx:
@@ -234,9 +234,9 @@ class SmartFacadeLogicTests(AuditLogCase):
             level="CAMPAIGN",
             name="Alpha New Prices",
             offerings=[
-                PriceOfferingItem(header="150x250 cm", description="Vliestapete", price_eur=149.00, final_url="https://example.com/1"),
-                PriceOfferingItem(header="200x250 cm", description="Vliestapete", price_eur=199.00, final_url="https://example.com/2"),
-                PriceOfferingItem(header="250x250 cm", description="Vliestapete", price_eur=249.00, final_url="https://example.com/3"),
+                PriceOfferingItem(header="150 cm", description="Leather Shoes", price_eur=149.00, final_url="https://example.com/1"),
+                PriceOfferingItem(header="200 cm", description="Leather Shoes", price_eur=199.00, final_url="https://example.com/2"),
+                PriceOfferingItem(header="250 cm", description="Leather Shoes", price_eur=249.00, final_url="https://example.com/3"),
             ]
         )
 

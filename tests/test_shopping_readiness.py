@@ -47,7 +47,7 @@ def healthy_gmc(**kw):
                  "unmetRequirements": [{"title": "HAS_KOREAN_BUSINESS_REGISTRATION_NUMBER", "affectedRegionCodes": ["KR"]}]},
         feed_labels={"EXAMPLE_FEED"},
         counts={"DE": {"active": 521, "pending": 0, "disapproved": 0}, "AT": {"active": 521, "pending": 0, "disapproved": 0}},
-        custom_label_0={"muster", "wand"})
+        custom_label_0={"clearance", "wand"})
     for key, value in kw.items():
         setattr(state, key, value)
     return state
@@ -76,12 +76,12 @@ class ModelTests(unittest.TestCase):
 
     def test_bad_input_is_refused(self):
         for bad in ({"merchant_id": "abc"}, {"feed_label": "bad label!"}, {"geo_target_constants": []},
-                    {"custom_label_0_values": ["Muster; x"]}):
+                    {"custom_label_0_values": ["Clearance; x"]}):
             with self.assertRaises(ValidationError, msg=str(bad)):
                 request(**bad)
 
     def test_label_values_are_normalised(self):
-        self.assertEqual(request(custom_label_0_values=[" Muster ", "muster", "Wand"]).custom_label_0_values, ["muster", "wand"])
+        self.assertEqual(request(custom_label_0_values=[" Clearance ", "clearance", "Wand"]).custom_label_0_values, ["clearance", "wand"])
 
     def test_the_tool_is_a_registered_read(self):
         import server
@@ -145,16 +145,16 @@ class JudgingTests(unittest.TestCase):
 
     def test_custom_label_is_checked_only_when_asked_and_case_matters(self):
         self.assertNotIn("GMC_CUSTOM_LABEL", by_code(judge()))
-        asked = request(custom_label_0_values=["muster"])
+        asked = request(custom_label_0_values=["clearance"])
         self.assertEqual(by_code(judge(req=asked))["GMC_CUSTOM_LABEL"].status, "OK")
         missing = by_code(judge(req=request(custom_label_0_values=["ads"])))["GMC_CUSTOM_LABEL"]
         self.assertEqual(missing.status, "FAIL")
         self.assertIn("ads", missing.detail)
-        wrong_case = by_code(judge(req=asked, gmc=healthy_gmc(custom_label_0={"Muster"})))["GMC_CUSTOM_LABEL"]
-        self.assertEqual(wrong_case.status, "FAIL")   # the tree node would say 'muster'
+        wrong_case = by_code(judge(req=asked, gmc=healthy_gmc(custom_label_0={"Clearance"})))["GMC_CUSTOM_LABEL"]
+        self.assertEqual(wrong_case.status, "FAIL")   # the tree node would say 'clearance'
 
     def test_no_labels_in_the_catalog_says_so(self):
-        check = by_code(judge(req=request(custom_label_0_values=["muster"]), gmc=healthy_gmc(custom_label_0=set())))["GMC_CUSTOM_LABEL"]
+        check = by_code(judge(req=request(custom_label_0_values=["clearance"]), gmc=healthy_gmc(custom_label_0=set())))["GMC_CUSTOM_LABEL"]
         self.assertEqual(check.status, "FAIL")
         self.assertIn("no labels at all", check.detail)
 
@@ -171,7 +171,7 @@ class JudgingTests(unittest.TestCase):
 
     def test_unreadable_merchant_center_skips_its_checks_and_never_blocks(self):
         gmc = GmcState(skipped="IMPERSONATION_DENIED", skipped_detail="no right")
-        checks = by_code(judge(req=request(custom_label_0_values=["muster"]), gmc=gmc))
+        checks = by_code(judge(req=request(custom_label_0_values=["clearance"]), gmc=gmc))
         for code in ("GMC_PROGRAM", "GMC_FEED_LABEL", "GMC_PRODUCTS", "GMC_CUSTOM_LABEL"):
             self.assertEqual(checks[code].status, "SKIPPED", code)
             self.assertIn("IMPERSONATION_DENIED", checks[code].detail)
@@ -196,7 +196,7 @@ def search_payloads():
             {"name": "x/SHOPPING_ADS~AT", "reportingContext": "SHOPPING_ADS", "country": "AT", "stats": {"activeCount": "521", "pendingCount": "6"}},
             {"name": "x/FREE_LISTINGS~DE", "reportingContext": "FREE_LISTINGS", "country": "DE", "stats": {"activeCount": "296", "pendingCount": "231"}},
             {"name": "x/UNSPEC", "reportingContext": "REPORTING_CONTEXT_ENUM_UNSPECIFIED", "country": "DE", "stats": {"disapprovedCount": "9"}}]},
-        "products": {"products": [{"productAttributes": {"customLabel0": "muster"}}, {"productAttributes": {}}]},
+        "products": {"products": [{"productAttributes": {"customLabel0": "clearance"}}, {"productAttributes": {}}]},
     }
 
 
@@ -233,8 +233,8 @@ class ReadingTests(unittest.TestCase):
     def test_custom_labels_are_read_when_asked(self):
         calls, patcher = self.patched()
         with patcher:
-            state = read_gmc_state(request(custom_label_0_values=["muster"]))
-        self.assertEqual(state.custom_label_0, {"muster"})
+            state = read_gmc_state(request(custom_label_0_values=["clearance"]))
+        self.assertEqual(state.custom_label_0, {"clearance"})
 
     def test_a_failure_of_access_skips_everything_after_it(self):
         calls, patcher = self.patched(fail={"programs.get": "IMPERSONATION_DENIED"})

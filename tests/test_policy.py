@@ -155,6 +155,14 @@ class ShippedPolicyIsNeutral(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CampaignLocationRequest(campaign_id="1", geo_target_id=0, enabled=True)
 
+    def test_no_schedule_and_generic_negative_packs(self):
+        self.assertEqual(policy.schedule_windows(), [])
+        for language in ("de", "fr", "es"):
+            self.assertTrue(policy.negative_pack(language))
+        self.assertEqual(policy.negative_pack("xx"), [])
+        for word in ("diy", "amazon"):
+            self.assertIn(word, policy.negative_pack("de"))
+
     def test_display_paths_default_to_neutral_words(self):
         request = rsa("https://anything.example/shoes")
         self.assertEqual((request.path1, request.path2), ("Shop", "Sale"))
@@ -187,6 +195,17 @@ class ToolsThatNeedThePolicyRefuse(unittest.TestCase):
             result = negative_tools.auto_fix_collisions_and_dupes(customer_id="1112223334")
         self.assertFalse(result.success)
         self.assertIn("ads.priority_campaign_marker", result.error.message)
+
+    def test_negative_packs_come_from_the_policy_and_an_empty_pack_is_refused(self):
+        from shield.models_criterion import ApplyNegativeShieldRequest
+        from tools import negative_tools
+        self.assertEqual(policy.negative_pack("DE"), ["amazon", "ebay", "kostenlos", "diy"])
+        request = ApplyNegativeShieldRequest(campaign_id="1", language="de")
+        with policy.override({"negatives": {"packs": {}}}):
+            with mock.patch.object(negative_tools, "get_ads_client"):
+                result = negative_tools.apply_negative_shield(request, customer_id="1112223334")
+        self.assertFalse(result.success)
+        self.assertIn("negatives.packs.de", result.error.message)
 
     def test_a_new_search_campaign_needs_geo_and_language(self):
         from shield.models_campaign import CreateSearchCampaignRequest
@@ -233,6 +252,15 @@ class UrlRulesDriveTheShield(unittest.TestCase):
             CreateCalloutAssetsRequest(campaign_id="1", callouts=["Marketplace deals", "Fast"])
             with self.assertRaises(ValidationError):
                 CreateCalloutAssetsRequest(campaign_id="1", callouts=["So cheap", "Fast"])
+
+    def test_schedule_windows_drive_both_campaign_tools(self):
+        self.assertEqual(policy.schedule_windows(), [(8, 24), (0, 1)])
+        with policy.override({"ads": {"schedule_windows": [[9, 18]]}}):
+            self.assertEqual(policy.schedule_windows(), [(9, 18)])
+        for bad in ([[18, 9]], [[0, 25]], [[1]], [["a", 2]]):
+            with self.subTest(bad=bad), self.assertRaises(policy.PolicyError):
+                with policy.override({"ads": {"schedule_windows": bad}}):
+                    pass
 
     def test_the_policy_decides_the_default_display_paths_and_shopping_prefix(self):
         with policy.override({"ads": {"display_paths": ["Wear", "Deals"]}}):

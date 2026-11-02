@@ -2,6 +2,24 @@
 
 All notable changes to `safe-google-ads-mcp`. Dates are ISO. Tool names are the MCP tool names.
 
+## 1.1.1 - 2026-11-02
+
+**No niche business logic left in the code.** What was still specific to one wallpaper shop moved into the policy or became neutral.
+
+### Changed
+- `ads.schedule_windows` (policy): the daily ad schedule of `create_search_campaign` and `create_shopping_campaign` is no longer a
+  hard-coded 08:00 to 01:00; the shipped policy has none (ads run all day). The dry run of `create_shopping_campaign` prints the
+  schedule it will apply.
+- `negatives.packs` (policy): the negative keyword packs of `apply_negative_shield` are data. The shipped policy has a small generic
+  pack per language (marketplaces, freebies, DIY, research words); the niche words that were in the code (home-improvement stores,
+  wall-decor terms) are gone from the repository. A language without a pack is refused with the key to set.
+- `check_shopping_readiness`: the Merchant Center country of a geo target is looked up in a wider table (DE, AT, CH, FR, IT, ES, NL,
+  BE, PL, GB, US, CA, AU) instead of only DE and AT.
+- The test suite no longer writes into the real `logs/audit.jsonl` and the online journal (`tests/policy_env.py` redirects both): a test that
+  sent a bad request through the shield used to leave a rejected call there, which a health check reads as an agent hammering the shield.
+- Tool descriptions, error texts and tests use neutral examples (`SKU-100-L`, `clearance`, shoe-store fixtures) instead of product codes
+  and wording of one shop.
+
 ## 1.1.0 - 2026-11-01
 
 **59 tools (+5), the business rules moved out of the code into a policy file, 3 new skills.**

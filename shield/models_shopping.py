@@ -49,7 +49,7 @@ def _clean_offers(value: List[str]) -> List[str]:
     for offer in value:
         offer = offer.strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,60}", offer):
-            raise ValueError("an offer ID is letters, digits, . _ and - (1-60 characters), e.g. WE-003-150x250")
+            raise ValueError("an offer ID is letters, digits, . _ and - (1-60 characters), e.g. SKU-100-L")
         if offer.lower() not in (known.lower() for known in cleaned):
             cleaned.append(offer)
     if len(cleaned) > MAX_OFFERS:
@@ -66,9 +66,9 @@ class CreateShoppingCampaignRequest(BaseModel):
     campaign_priority: int = Field(default=0, ge=0, le=2, description="Shopping campaign priority 0-2")
     geo_target_constants: List[int] = Field(default_factory=_default_geo, description="Targeted geo IDs, e.g. 2276 Germany, 2040 Austria (default: shopping.default_geo of the policy)")
     ad_group_name: str = Field(default_factory=lambda: policy.text("shopping.default_ad_group_name") or "All products", min_length=3, max_length=120, description="Name of the one Shopping ad group")
-    offers: List[str] = Field(default_factory=list, description="offer_id of the products to advertise, e.g. ['WE-003-150x250', 'WE-003-muster']; nothing else is advertised. Each must exist in the catalog")
+    offers: List[str] = Field(default_factory=list, description="offer_id of the products to advertise, e.g. ['SKU-100-L', 'SKU-100-S']; nothing else is advertised. Each must exist in the catalog")
     all_products: bool = Field(default=False, description="True: advertise the whole feed instead of a selection (never the default)")
-    exclude_custom_label_0: List[str] = Field(default_factory=list, description="With all_products only: values of g:custom_label_0 to leave out (e.g. ['muster'])")
+    exclude_custom_label_0: List[str] = Field(default_factory=list, description="With all_products only: values of g:custom_label_0 to leave out (e.g. ['clearance'])")
     dry_run: bool = Field(default=False, description="True: check everything and build the operations, write nothing")
 
     @field_validator("name", "ad_group_name")
@@ -107,7 +107,7 @@ class CreateShoppingCampaignRequest(BaseModel):
         if self.offers and self.all_products:
             raise ValueError("offers and all_products exclude each other: either a selection or the whole feed")
         if not self.offers and not self.all_products:
-            raise ValueError("choose the products: offers=['WE-003-150x250', ...] or, deliberately, all_products=True; the whole feed is never the default")
+            raise ValueError("choose the products: offers=['SKU-100-L', ...] or, deliberately, all_products=True; the whole feed is never the default")
         if self.offers and self.exclude_custom_label_0:
             raise ValueError("exclude_custom_label_0 works with all_products only; a selection by offers already leaves out everything else")
         _need_merchant_and_feed(self)

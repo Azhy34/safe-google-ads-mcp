@@ -25,6 +25,7 @@ A tool that needs something the policy does not give it refuses instead of guess
 | `account.merchant_center_id` / `account.feed_label` | `create_shopping_campaign` and `check_shopping_readiness` refuse unless you pass `merchant_id` and `feed_label` |
 | `ads.priority_campaign_marker` | `auto_fix_collisions_and_dupes` refuses to run |
 | `ads.default_geo` / `ads.default_language` | `create_search_campaign` refuses an empty geo or language list unless you pass them |
+| `negatives.packs.<language>` | `apply_negative_shield` refuses a language that has no pack and no `negative_words` |
 | `geo.target_country_codes` | `audit_geo_physical_locations` has no target countries and refuses to judge |
 | `ads.url_rules` empty | no URL or ad text is checked against a rule |
 | `site.forbidden_terms` empty | no word is refused in sitelinks and callouts |
@@ -46,8 +47,10 @@ A tool that needs something the policy does not give it refuses instead of guess
     "display_paths": ["Shop", "Sale"],
     "default_geo": [],
     "default_language": [],
-    "priority_campaign_marker": ""
+    "priority_campaign_marker": "",
+    "schedule_windows": []
   },
+  "negatives": { "packs": {} },
   "site": { "allowed_hosts": [], "forbidden_terms": [], "asset_name_prefix": "Site image" },
   "shopping": { "name_prefix": "", "default_geo": [2276], "default_ad_group_name": "All products" },
   "geo": { "target_country_codes": [], "allowed_target_ids": [] },
@@ -65,6 +68,8 @@ A tool that needs something the policy does not give it refuses instead of guess
 | `ads.url_rules` | `deploy_golden_rsa`, the level 3 audit | List of URL rules, see below |
 | `ads.display_paths` | `deploy_golden_rsa` | Default `path1` and `path2` (two texts, 1 to 15 characters) |
 | `ads.default_geo`, `ads.default_language` | `create_search_campaign` | Default geo target and language constant IDs of a new Search campaign |
+| `ads.schedule_windows` | `create_search_campaign`, `create_shopping_campaign` | Daily ad schedule: a list of `[start_hour, end_hour]` windows (0 to 24) applied to every day of the week, for example `[[8, 24], [0, 1]]` keeps 01:00 to 08:00 closed. Empty: no schedule, ads run all day |
+| `negatives.packs` | `apply_negative_shield` | Negative keyword packs per language code (`de`, `fr`, `es`): `{"de": ["amazon", "kostenlos", ...]}`. The shipped policy carries a small generic pack (marketplaces, freebies, DIY, research words); put the niche words of your own business in your policy. A language without a pack is refused |
 | `ads.priority_campaign_marker` | `auto_fix_collisions_and_dupes` | Text in the name of the campaigns whose keywords win; duplicates in all other campaigns are paused |
 | `site.allowed_hosts` | sitelinks, `create_image_asset` | The only hosts your site tools may use (exact host names, `https` only) |
 | `site.forbidden_terms` | sitelinks, callouts | Words refused in sitelink texts and URLs and in callouts (case-insensitive substrings) |
@@ -123,10 +128,9 @@ and add a test:
 
 - Maximize Clicks (`TARGET_SPEND`) with a CPC ceiling, ceiling steps of exactly ±0.05 EUR within 0.10 to 3.00 EUR, daily budget bounds.
 - New Search and Shopping campaigns: Google search only (search partners and Display off), always created PAUSED (Shopping) or
-  with the status you pass (Search, default PAUSED), a day schedule of 08:00 to 01:00, the EU political advertising declaration.
+  with the status you pass (Search, default PAUSED), the EU political advertising declaration.
 - The 15 headlines / 4 descriptions matrix of `deploy_golden_rsa` with Dynamic Keyword Insertion pinned to headline 1.
-- The negative keyword packs of `apply_negative_shield` (German, French, Spanish; `NEGATIVE_SHIELDS` in `tools/negative_tools.py`) and
-  the examples of `search_keyword_ideas` (German, Germany).
+- The default of `search_keyword_ideas` (German, Germany) and the supported languages of the negative packs (`de`, `fr`, `es`).
 - The preflight gate, the one-lever-at-a-time rule and the other process rules of `evaluate_agent_process`.
 
 ## Tests

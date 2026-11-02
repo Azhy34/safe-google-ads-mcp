@@ -30,16 +30,16 @@ CAMPAIGN = "2000000001"
 BASE = "https://example-shop.test"
 
 
-def link(text="Fototapete Wald", url=f"{BASE}/motive/fototapete-wald", d1="Waldtiere fürs Kinderzimmer", d2="Kostenloser Versand DE & AT"):
+def link(text="Trail Shoes", url=f"{BASE}/shoes/trail", d1="Grip for rough ground", d2="Free shipping"):
     return {"link_text": text, "description1": d1, "description2": d2, "final_url": url}
 
 
 def four():
     return [
         link(),
-        link("Tapete Dschungel", f"{BASE}/motive/tapete-dschungel", "Safari & Dschungel Motive", "Direkt vom Hersteller"),
-        link("Weltraum Tapete", f"{BASE}/motive/weltraum-tapete", "Planeten & Sonnensystem", "Muster DIN A4 für 16,50 €"),
-        link("Alle Motive ansehen", f"{BASE}/motive", "Fototapeten nach Thema", "Vlies, Paste-the-Wall"),
+        link("Road Shoes", f"{BASE}/shoes/road", "Light and fast", "Direct from the maker"),
+        link("Track Shoes", f"{BASE}/shoes/track", "Spikes included", "Samples from 16.50 EUR"),
+        link("All shoes", f"{BASE}/shoes", "Shoes by sport", "Leather and textile"),
     ]
 
 
@@ -70,8 +70,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(len(req.sitelinks), 4)
 
     def test_www_host_is_accepted_and_texts_are_stripped(self):
-        item = SitelinkItem(**link("  Fototapete Wald  ", "https://www.example-shop.test/motive/fototapete-wald"))
-        self.assertEqual(item.link_text, "Fototapete Wald")
+        item = SitelinkItem(**link("  Trail Shoes  ", "https://www.example-shop.test/shoes/trail"))
+        self.assertEqual(item.link_text, "Trail Shoes")
 
     def test_text_limits(self):
         with self.assertRaises(ValidationError):
@@ -84,12 +84,12 @@ class ContractTests(unittest.TestCase):
 
     def test_address_must_be_a_clean_https_page_of_the_site(self):
         for bad in (
-            "http://example-shop.test/motive",                       # not https
+            "http://example-shop.test/shoes",                       # not https
             "https://shop.marketplace.example/de/listing/1",           # Marketplace
-            "https://example-shop.test.evil.example/motive",         # look-alike host
-            "https://example.com/motive",                             # other site
-            f"{BASE}/motive?coupon=SAVE10",                         # query string
-            f"{BASE}/motive#faq",                                     # anchor
+            "https://example-shop.test.evil.example/shoes",         # look-alike host
+            "https://example.com/shoes",                             # other site
+            f"{BASE}/shoes?coupon=SAVE10",                         # query string
+            f"{BASE}/shoes#faq",                                     # anchor
         ):
             with self.subTest(url=bad), self.assertRaises(ValidationError):
                 SitelinkItem(**link(url=bad))

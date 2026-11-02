@@ -137,7 +137,7 @@ class UnlinkAssetRequest(BaseModel):
 
 class PriceOfferingItem(BaseModel):
     header: str = Field(..., description="Offering title, e.g. 150 x 250 cm")
-    description: str = Field(..., description="Offering description, e.g. Premium Vliestapete")
+    description: str = Field(..., description="Offering description, e.g. Premium Leather Shoes")
     price_eur: float = Field(..., description="Price in EUR, e.g. 149.00")
     final_url: str = Field(..., description="Landing URL with tracking/coupon")
 

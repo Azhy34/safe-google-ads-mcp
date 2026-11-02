@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from google.ads.googleads.errors import GoogleAdsException
 
 from core.client import get_ads_client, eur_to_micros
+from core import policy
 from core.config import CUSTOMER_ID
 from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
 from shield.models_shopping import CheckShoppingReadinessRequest, CreateShoppingCampaignRequest
@@ -31,7 +32,6 @@ from tools.shopping_selection import resolve_selection
 
 # Temporary IDs are unique across the whole request, whatever the resource: the root of the product tree (adGroupId~criterionId) may not reuse -1 of the budget
 TEMP_BUDGET, TEMP_CAMPAIGN, TEMP_AD_GROUP, TEMP_TREE_ROOT = -1, -2, -3, -4
-SCHEDULE_WINDOWS = ((8, 24), (0, 1))  # 08:00-24:00 and 00:00-01:00 every day: the night 01:00-08:00 stays closed, like the Search campaigns this server creates
 
 
 def _refusal(code: str, message: str, trigger: str = "", field: str = "name") -> ServiceResult:
@@ -91,7 +91,7 @@ def build_campaign_operations(client, customer_id: str, req: CreateShoppingCampa
     for day in (client.enums.DayOfWeekEnum.MONDAY, client.enums.DayOfWeekEnum.TUESDAY, client.enums.DayOfWeekEnum.WEDNESDAY,
                 client.enums.DayOfWeekEnum.THURSDAY, client.enums.DayOfWeekEnum.FRIDAY, client.enums.DayOfWeekEnum.SATURDAY,
                 client.enums.DayOfWeekEnum.SUNDAY):
-        for start, end in SCHEDULE_WINDOWS:
+        for start, end in policy.schedule_windows():
             op = client.get_type("MutateOperation")
             criterion = op.campaign_criterion_operation.create
             criterion.campaign = campaign_rn
@@ -219,11 +219,16 @@ def _readiness_text(readiness) -> str:
     return readiness.verdict + (f" ({' | '.join(notes)})" if notes else "")
 
 
+def _schedule_text() -> str:
+    windows = policy.schedule_windows()
+    return ("windows " + ", ".join(f"{start:02d}:00-{end:02d}:00" for start, end in windows) + f" ({7 * len(windows)} criteria)") if windows else "none (all day)"
+
+
 def _plan_text(req: CreateShoppingCampaignRequest, n_campaign: int, n_tree: int, products: str, readiness: str) -> str:
     return (f"'{req.name}': Standard Shopping, PAUSED, {req.budget_eur:.2f} EUR a day, Maximize Clicks with a ceiling of "
             f"{req.cpc_ceiling_eur:.2f} EUR, Merchant Center {req.merchant_id} / feed label {req.feed_label}, Google search only "
             f"(no partners, no display), geo {req.geo_target_constants} (presence), "
-            f"schedule 08:00-01:00 (14 windows), one ad group '{req.ad_group_name}' with one product ad; products: {products}. "
+            f"schedule {_schedule_text()}, one ad group '{req.ad_group_name}' with one product ad; products: {products}. "
             f"Readiness: {readiness}. "
             f"One all-or-nothing request: {n_campaign + n_tree} operations ({n_campaign} for the campaign, {n_tree} for the product tree).")
 
@@ -290,7 +295,7 @@ def create_shopping_campaign(req: CreateShoppingCampaignRequest, customer_id: st
                             "nothing was created (check_shopping_readiness shows which side is silent).", ", ".join(req.offers), "offers")
         if resolution.unknown:
             return _refusal("OFFER_NOT_FOUND", f"The catalog has no offer {', '.join(resolution.unknown)} (looked in {resolution.source}); "
-                            "nothing was created. Offer IDs look like WE-003-150x250 and WE-003-muster.", ", ".join(resolution.unknown), "offers")
+                            "nothing was created. Offer IDs look like SKU-100-L and SKU-100-S.", ", ".join(resolution.unknown), "offers")
         if resolution.not_eligible:
             return _refusal("OFFER_NOT_ELIGIBLE", f"Merchant Center disapproved {', '.join(resolution.not_eligible)} for Shopping ads in the "
                             "campaign's countries: they cannot show; nothing was created.", ", ".join(resolution.not_eligible), "offers")
