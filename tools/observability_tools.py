@@ -150,20 +150,57 @@ def read_cloud_audit_log(since: datetime, operator: Optional[str] = None, sessio
         sys.stderr.write(f"[CLOUD LOG] more than {MAX_SCAN} journal entries since {since.isoformat()}: the oldest were left out\n")
     return list(reversed(entries))
 
-# The start of the online journal moves only when retention trims it (daily): one read per process every 30 minutes
+# The start of the online journal moves only when retention trims it (daily): one read per process every 30 minutes, and one per
+# day across processes. The preflight runs once per session, that is in a new process, so the memory cache alone never helped:
+# the query ("oldest entry of 30 days, ascending") took 13.0 s of a 21.9 s preflight (trace of 12.11.2026).
 JOURNAL_START_CACHE_TTL = timedelta(minutes=30)
 _journal_start_cache: Dict[str, Any] = {"at": None, "value": None}
+JOURNAL_START_FILE = Path(__file__).resolve().parent.parent / "logs" / "journal_start.json"  # next to preflight_state.json, outside git
+JOURNAL_START_DISK_TTL = timedelta(hours=24)
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+def _read_journal_start_file(now: datetime) -> Optional[datetime]:
+    """The start of the journal written by an earlier process less than a day ago; None for no file, a broken file or an old one."""
+    try:
+        data = json.loads(JOURNAL_START_FILE.read_text(encoding="utf-8"))
+        fetched, value = _utc(datetime.fromisoformat(data["fetched_at"])), _utc(datetime.fromisoformat(data["value"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if now - fetched >= JOURNAL_START_DISK_TTL or fetched > now + timedelta(minutes=1):
+        return None
+    return value
+
+def _write_journal_start_file(now: datetime, value: datetime) -> None:
+    """Never fails the tool: a file that cannot be written only means the next process asks the journal again."""
+    try:
+        JOURNAL_START_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp = JOURNAL_START_FILE.with_name(JOURNAL_START_FILE.name + ".tmp")
+        temp.write_text(json.dumps({"value": value.isoformat(), "fetched_at": now.isoformat()}), encoding="utf-8")
+        os.replace(temp, JOURNAL_START_FILE)  # another process never reads half a file
+    except OSError:
+        pass
 
 def cloud_journal_start() -> Optional[datetime]:
     """Oldest entry still kept in the online journal (retention 30 days)."""
     now = datetime.now(timezone.utc)
     if _journal_start_cache["at"] and now - _journal_start_cache["at"] < JOURNAL_START_CACHE_TTL:
         return _journal_start_cache["value"]
+    stored = _read_journal_start_file(now)
+    if stored is not None:
+        # The file is up to a day old and retention has trimmed the journal since: the start can only have moved forward, never
+        # behind the retention limit, so a stale value is clamped and never claims that the journal reaches further back than it does.
+        value = max(stored, now - timedelta(hours=MAX_HOURS))
+        _journal_start_cache.update({"at": now, "value": value})
+        return value
     project = os.getenv("GOOGLE_CLOUD_PROJECT") or ""
     since = now - timedelta(hours=MAX_HOURS)
     entries, _ = read_cloud_entries(build_filter(project, since), max_entries=1, newest_first=False)
     value = datetime.fromisoformat(entries[0]["timestamp"]) if entries else None
     _journal_start_cache.update({"at": now, "value": value})
+    if value is not None:
+        _write_journal_start_file(now, value)  # an empty or unknown answer is not written down: it must not stick for a day
     return value
 
 def local_journal_start() -> Optional[datetime]:

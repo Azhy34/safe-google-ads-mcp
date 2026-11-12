@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import random
+import threading
 import grpc
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
@@ -74,6 +75,22 @@ def _is_transient(exc) -> bool:
         pass
     return "metadata from plugin" not in details and "invalid_grant" not in details
 
+def _is_auth_failure(exc) -> bool:
+    """
+    The credentials of the cached client are no good (revoked or expired refresh token, rejected token): keeping the client
+    would repeat the failure for ever, a new one reads the environment again. A permission error (authorization_error) is
+    not one of these: the credentials work, the account does not allow the call.
+    """
+    status = failure_status(exc)
+    if status.startswith("authentication_error.") or status == "grpc.UNAUTHENTICATED":
+        return True
+    details = ""
+    try:
+        details = exc.details() or ""
+    except Exception:
+        pass
+    return "metadata from plugin" in details or "invalid_grant" in details
+
 class GoogleAdsCallInterceptor(grpc.UnaryUnaryClientInterceptor):
     """
     Google's logging guide (developers.google.com/google-ads/api/docs/productionize/logging, Option 4: a custom gRPC
@@ -105,6 +122,8 @@ class GoogleAdsCallInterceptor(grpc.UnaryUnaryClientInterceptor):
                     record_api_call(method, ms, failure_status(exc), request_id, attempt, _request_text(request))
             except Exception:
                 pass  # the journal never breaks an API call
+            if exc is not None and _is_auth_failure(exc):
+                drop_cached_client()  # the next tool call builds a client from the environment again
             if exc is not None and retryable and attempt <= len(RETRY_DELAYS_S) and _is_transient(exc):
                 time.sleep(RETRY_DELAYS_S[attempt - 1] + random.uniform(0, RETRY_JITTER_S))
                 continue
@@ -112,24 +131,31 @@ class GoogleAdsCallInterceptor(grpc.UnaryUnaryClientInterceptor):
 
 _API_CALL_INTERCEPTOR = GoogleAdsCallInterceptor()
 
-def get_ads_client(login_id: str = None) -> GoogleAdsClient:
-    """
-    Initializes and returns an official GoogleAdsClient using credentials from environment.
-    Uses use_proto_plus=True for high-performance protobuf access.
-    Every service client it hands out carries the GoogleAdsCallInterceptor, so the 57 get_service() calls in tools/ need no change.
-    """
-    if os.environ.get("MCP_SERVER_PROCESS") != "1" and "unittest" not in sys.modules and "pytest" not in sys.modules and os.environ.get("PYTEST_CURRENT_TEST") is None:
-        raise RuntimeError(
-            "DIRECT_GOOGLE_ADS_API_BLOCKED: Direct calls to Google Ads API outside the MCP server process are strictly forbidden by project rules. "
-            "All Google Ads operations must be executed exclusively through registered FastMCP tools via call_mcp_tool to ensure zero-hallucination shields, W3C tracing, and audit.jsonl logging."
-        )
+# One client per login id, kept for the life of the process (12.11.2026). Google's guide: reuse the client. A new one pays an
+# OAuth token request and a new connection on its first call: 417 ms of a 978 ms read in the trace of get_ad_groups. The
+# library renews the token by itself and a shared client is safe for reading and for parallel calls; a failure that says the
+# credentials are no good drops the client (see _is_auth_failure), so a revoked token is never kept alive.
+_CLIENTS: dict = {}
+_CLIENTS_LOCK = threading.Lock()
 
+def _login_key(login_id: str = None) -> str:
+    return login_id or os.environ.get('GOOGLE_ADS_LOGIN_CUSTOMER_ID') or LOGIN_CUSTOMER_ID
+
+def drop_cached_client(login_id: str = None) -> None:
+    """Forgets the cached client of one login id, or all of them when none is named; the next get_ads_client builds a new one."""
+    with _CLIENTS_LOCK:
+        if login_id is None:
+            _CLIENTS.clear()
+        else:
+            _CLIENTS.pop(_login_key(login_id), None)
+
+def _build_client(login_key: str) -> GoogleAdsClient:
     credentials = {
         'developer_token': os.environ.get('GOOGLE_ADS_DEVELOPER_TOKEN'),
         'refresh_token': os.environ.get('GOOGLE_ADS_REFRESH_TOKEN'),
         'client_id': os.environ.get('GOOGLE_ADS_CLIENT_ID'),
         'client_secret': os.environ.get('GOOGLE_ADS_CLIENT_SECRET'),
-        'login_customer_id': login_id or os.environ.get('GOOGLE_ADS_LOGIN_CUSTOMER_ID') or LOGIN_CUSTOMER_ID,
+        'login_customer_id': login_key,
         'use_proto_plus': True
     }
     client = GoogleAdsClient.load_from_dict(credentials)
@@ -140,6 +166,25 @@ def get_ads_client(login_id: str = None) -> GoogleAdsClient:
 
     client.get_service = get_service
     return client
+
+def get_ads_client(login_id: str = None) -> GoogleAdsClient:
+    """
+    Returns the official GoogleAdsClient of this process for the login id (credentials from the environment), built on the
+    first call and reused after it. Uses use_proto_plus=True for high-performance protobuf access.
+    Every service client it hands out carries the GoogleAdsCallInterceptor, so the 57 get_service() calls in tools/ need no change.
+    """
+    if os.environ.get("MCP_SERVER_PROCESS") != "1" and "unittest" not in sys.modules and "pytest" not in sys.modules and os.environ.get("PYTEST_CURRENT_TEST") is None:
+        raise RuntimeError(
+            "DIRECT_GOOGLE_ADS_API_BLOCKED: Direct calls to Google Ads API outside the MCP server process are strictly forbidden by project rules. "
+            "All Google Ads operations must be executed exclusively through registered FastMCP tools via call_mcp_tool to ensure zero-hallucination shields, W3C tracing, and audit.jsonl logging."
+        )
+
+    key = _login_key(login_id)
+    with _CLIENTS_LOCK:
+        client = _CLIENTS.get(key)
+        if client is None:
+            client = _CLIENTS[key] = _build_client(key)
+        return client
 
 def eur_to_micros(amount_eur: float) -> int:
     """
