@@ -9,12 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.client import get_ads_client, eur_to_micros
 from core import policy
 from core.config import CUSTOMER_ID
-from shield.error_shield import ServiceResult, handle_google_ads_errors
+from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
 from shield.models_campaign import (
     GoogleCampaignRecord, CampaignBudgetRecord, 
     CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest,
     CampaignTargetingRecord, CampaignCeilingStepRequest,
-    CreateSearchCampaignRequest, CreateCampaignResponse
+    CreateSearchCampaignRequest, CreateCampaignResponse,
+    CampaignDatesUpdateRequest, NO_END_DATE,
 )
 
 CEILING_MIN_MICROS = 100_000    # 0.10 EUR
@@ -455,3 +456,116 @@ def create_search_campaign(req: CreateSearchCampaignRequest, customer_id: str = 
         cpc_ceiling_eur=req.cpc_ceiling_eur,
         keywords_count=kw_count
     )
+
+
+@handle_google_ads_errors
+def update_campaign_dates(req: CampaignDatesUpdateRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Updates campaign start_date_time and/or end_date_time using an explicit update_mask,
+    then reads the campaign back from Google Ads API to verify the stored dates.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+
+    rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign.name, campaign.status, campaign.start_date_time, campaign.end_date_time
+        FROM campaign
+        WHERE campaign.id = {req.campaign_id} AND campaign.status != 'REMOVED'
+        LIMIT 1
+    """))
+    if not rows:
+        return ServiceResult(
+            success=False,
+            error=ApiError(
+                code="CAMPAIGN_NOT_FOUND",
+                message=f"Campaign {req.campaign_id} does not exist in this account.",
+                trigger=req.campaign_id,
+                field_path=["campaign_id"],
+            ),
+            telemetry=Telemetry(latency_ms=0.0),
+        )
+
+    existing = rows[0].campaign
+    old_start = getattr(existing, "start_date_time", "") or "unset"
+    old_end = getattr(existing, "end_date_time", "") or "unset"
+
+    new_start_dt = f"{req.start_date} 00:00:00" if req.start_date else None
+    new_end_dt = (
+        f"{NO_END_DATE} 23:59:59" if req.clear_end_date
+        else (f"{req.end_date} 23:59:59" if req.end_date else None)
+    )
+
+    changes = []
+    if new_start_dt:
+        changes.append(f"start_date_time={new_start_dt}")
+    if new_end_dt:
+        note = " (cleared end date)" if req.clear_end_date else ""
+        changes.append(f"end_date_time={new_end_dt}{note}")
+    changes_desc = ", ".join(changes)
+
+    if req.dry_run:
+        return (
+            f"DRY RUN: Campaign {req.campaign_id} ('{existing.name}') dates would be updated ({changes_desc}); "
+            f"current start={old_start}, end={old_end}. Nothing was written to the account."
+        )
+
+    campaign_service = client.get_service("CampaignService")
+    operation = client.get_type("CampaignOperation")
+    campaign = operation.update
+    campaign.resource_name = campaign_service.campaign_path(customer_id, req.campaign_id)
+    mask_paths = []
+    if new_start_dt:
+        campaign.start_date_time = new_start_dt
+        mask_paths.append("start_date_time")
+    if new_end_dt:
+        campaign.end_date_time = new_end_dt
+        mask_paths.append("end_date_time")
+    operation.update_mask.paths.extend(mask_paths)
+
+    campaign_service.mutate_campaigns(customer_id=customer_id, operations=[operation])
+
+    back = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT campaign.id, campaign.name, campaign.start_date_time, campaign.end_date_time
+        FROM campaign
+        WHERE campaign.id = {req.campaign_id}
+        LIMIT 1
+    """))
+    if not back:
+        return ServiceResult(
+            success=False,
+            error=ApiError(
+                code="NOT_APPLIED",
+                message=f"Google accepted the update for campaign {req.campaign_id}, but the campaign could not be read back.",
+                trigger=req.campaign_id,
+                field_path=["campaign_id"],
+            ),
+            telemetry=Telemetry(latency_ms=0.0),
+        )
+
+    stored = back[0].campaign
+    stored_start = getattr(stored, "start_date_time", "") or "unset"
+    stored_end = getattr(stored, "end_date_time", "") or "unset"
+    expected_end_prefix = NO_END_DATE if req.clear_end_date else req.end_date
+    if (req.start_date and not stored_start.startswith(req.start_date)) or (
+        expected_end_prefix and not stored_end.startswith(expected_end_prefix)
+    ):
+        return ServiceResult(
+            success=False,
+            error=ApiError(
+                code="NOT_APPLIED",
+                message=(
+                    f"Campaign {req.campaign_id} dates after update were start={stored_start}, end={stored_end}, "
+                    f"which does not match requested {changes_desc}."
+                ),
+                trigger=req.campaign_id,
+                field_path=mask_paths,
+            ),
+            telemetry=Telemetry(latency_ms=0.0),
+        )
+
+    return (
+        f"Campaign {req.campaign_id} ('{stored.name}') dates updated: "
+        f"start_date_time={stored_start}, end_date_time={stored_end} "
+        f"(was start={old_start}, end={old_end})."
+    )
+

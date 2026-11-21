@@ -17,6 +17,7 @@ from shield.models_asset import (
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest,
     SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
     CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest,
+    CreatePromotionAssetRequest,
 )
 
 @handle_google_ads_errors
@@ -1105,6 +1106,253 @@ def create_structured_snippet_asset(req: CreateStructuredSnippetAssetRequest, cu
         f"Structured snippet on Campaign {req.campaign_id} ('{campaign.name}'): header '{req.header}', "
         f"created {len(created)} new asset(s) {created or ''}, reused existing {reused or 'none'}, linked [{asset_id}]."
     )
+
+
+def _require_ad_group(ga_service, customer_id: str, ad_group_id: str):
+    """The live ad group row, or a typed failure when the id is not in this account."""
+    rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT ad_group.id, ad_group.name, ad_group.status
+        FROM ad_group
+        WHERE ad_group.id = '{ad_group_id}' AND ad_group.status != 'REMOVED'
+    """))
+    if not rows:
+        return None, ServiceResult(
+            success=False,
+            error=ApiError(code="AD_GROUP_NOT_FOUND", message=f"Ad group {ad_group_id} does not exist in this account.",
+                           trigger=ad_group_id, field_path=["ad_group_id"]),
+            telemetry=Telemetry(latency_ms=0.0))
+    return rows[0].ad_group, None
+
+
+def _promotion_signature(
+    promotion_target: str,
+    language_code: str,
+    percent_off_micros: Optional[int],
+    money_off_micros: Optional[int],
+    promotion_code: Optional[str],
+    occasion: Optional[str],
+    redemption_start_date: Optional[str],
+    redemption_end_date: Optional[str],
+    final_url: str,
+):
+    """Canonical key for promotion idempotency so repeat calls reuse an identical existing asset."""
+    occ = (occasion or "").upper()
+    if occ in ("UNSPECIFIED", "UNKNOWN"):
+        occ = ""
+    return (
+        (promotion_target or "").strip().casefold(),
+        (language_code or "").strip().casefold(),
+        int(percent_off_micros or 0),
+        int(money_off_micros or 0),
+        (promotion_code or "").strip().casefold(),
+        occ,
+        (redemption_start_date or "").strip(),
+        (redemption_end_date or "").strip(),
+        (final_url or "").strip().rstrip("/").casefold(),
+    )
+
+
+@handle_google_ads_errors
+def create_promotion_asset(req: CreatePromotionAssetRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Creates a PromotionAsset in Google Ads (reusing an identical existing one if present), reads it back
+    from the API to confirm actual stored fields, and optionally links it to a Campaign or Ad Group.
+    Supports percent_off (1..100 -> API micro-percent * 10_000) or money_amount_off_eur, optional promotion_code
+    or orders_over_eur, occasion, redemption/serving dates, and dry_run=True preview.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+
+    target_label = None
+    if req.campaign_id:
+        campaign, failure = _require_campaign(ga_service, customer_id, req.campaign_id)
+        if failure:
+            return failure
+        target_label = f"Campaign {req.campaign_id} ('{campaign.name}')"
+    elif req.ad_group_id:
+        ad_group, failure = _require_ad_group(ga_service, customer_id, req.ad_group_id)
+        if failure:
+            return failure
+        target_label = f"Ad Group {req.ad_group_id} ('{ad_group.name}')"
+
+    percent_micros = req.percent_off * 10_000 if req.percent_off is not None else 0
+    money_micros = int(round(req.money_amount_off_eur * 1_000_000)) if req.money_amount_off_eur is not None else 0
+    wanted_sig = _promotion_signature(
+        req.promotion_target, req.language_code, percent_micros, money_micros,
+        req.promotion_code, req.occasion, req.redemption_start_date, req.redemption_end_date, req.final_url,
+    )
+
+    existing_id = None
+    for row in ga_service.search(customer_id=customer_id, query="""
+        SELECT
+            asset.id,
+            asset.final_urls,
+            asset.promotion_asset.promotion_target,
+            asset.promotion_asset.language_code,
+            asset.promotion_asset.percent_off,
+            asset.promotion_asset.money_amount_off.amount_micros,
+            asset.promotion_asset.promotion_code,
+            asset.promotion_asset.occasion,
+            asset.promotion_asset.redemption_start_date,
+            asset.promotion_asset.redemption_end_date
+        FROM asset
+        WHERE asset.type = 'PROMOTION'
+    """):
+        p = getattr(row.asset, "promotion_asset", None)
+        urls = list(getattr(row.asset, "final_urls", []) or [])
+        if not p or not urls:
+            continue
+        occ_raw = getattr(p, "occasion", None)
+        occ_name = occ_raw.name if hasattr(occ_raw, "name") else (str(occ_raw) if occ_raw else "")
+        money_obj = getattr(p, "money_amount_off", None)
+        row_sig = _promotion_signature(
+            getattr(p, "promotion_target", ""),
+            getattr(p, "language_code", ""),
+            getattr(p, "percent_off", 0),
+            getattr(money_obj, "amount_micros", 0) if money_obj else 0,
+            getattr(p, "promotion_code", ""),
+            occ_name,
+            getattr(p, "redemption_start_date", ""),
+            getattr(p, "redemption_end_date", ""),
+            urls[0],
+        )
+        if row_sig == wanted_sig:
+            existing_id = str(row.asset.id)
+            break
+
+    discount_desc = (
+        f"{'up to ' if req.discount_modifier == 'UP_TO' else ''}{req.percent_off}% off"
+        if req.percent_off is not None
+        else f"{'up to ' if req.discount_modifier == 'UP_TO' else ''}{req.money_amount_off_eur:.2f} {req.currency_code} off"
+    )
+    trigger_desc = (
+        f"code '{req.promotion_code}'" if req.promotion_code
+        else (f"orders over {req.orders_over_eur:.2f} {req.currency_code}" if req.orders_over_eur is not None else "no code")
+    )
+    window_desc = (
+        f"{req.redemption_start_date or '..'}..{req.redemption_end_date or '..'}"
+        if (req.redemption_start_date or req.redemption_end_date) else "open dates"
+    )
+    summary = (
+        f"'{req.name}' | target='{req.promotion_target}' | {discount_desc} | {trigger_desc} | "
+        f"lang={req.language_code} | occasion={req.occasion or 'NONE'} | redemption={window_desc} | url={req.final_url}"
+    )
+
+    if req.dry_run:
+        action = f"reuse existing asset {existing_id}" if existing_id else "create new PROMOTION asset"
+        link_note = f" and link to {target_label}" if target_label else " (library only, not linked)"
+        return f"DRY RUN: would {action}{link_note}: {summary}. Nothing was written to the account."
+
+    asset_service = client.get_service("AssetService")
+    created_new = False
+    asset_id = existing_id
+    if not asset_id:
+        op = client.get_type("AssetOperation")
+        a = op.create
+        a.name = req.name
+        a.type_ = client.enums.AssetTypeEnum.PROMOTION
+        a.final_urls.append(req.final_url)
+        p = a.promotion_asset
+        p.promotion_target = req.promotion_target
+        p.language_code = req.language_code
+        if req.percent_off is not None:
+            p.percent_off = percent_micros
+        else:
+            p.money_amount_off.currency_code = req.currency_code
+            p.money_amount_off.amount_micros = money_micros
+        if req.discount_modifier:
+            p.discount_modifier = getattr(client.enums.PromotionExtensionDiscountModifierEnum, req.discount_modifier)
+        if req.promotion_code:
+            p.promotion_code = req.promotion_code
+        elif req.orders_over_eur is not None:
+            p.orders_over_amount.currency_code = req.currency_code
+            p.orders_over_amount.amount_micros = int(round(req.orders_over_eur * 1_000_000))
+        if req.occasion:
+            p.occasion = getattr(client.enums.PromotionExtensionOccasionEnum, req.occasion)
+        if req.redemption_start_date:
+            p.redemption_start_date = req.redemption_start_date
+        if req.redemption_end_date:
+            p.redemption_end_date = req.redemption_end_date
+        if req.start_date:
+            p.start_date = req.start_date
+        if req.end_date:
+            p.end_date = req.end_date
+
+        response = asset_service.mutate_assets(customer_id=customer_id, operations=[op])
+        asset_id = response.results[0].resource_name.split("/")[-1]
+        created_new = True
+
+        # Read-back verification (confirm actual stored fields from Google Ads)
+        back = list(ga_service.search(customer_id=customer_id, query=f"""
+            SELECT
+                asset.id,
+                asset.name,
+                asset.final_urls,
+                asset.promotion_asset.promotion_target,
+                asset.promotion_asset.language_code,
+                asset.promotion_asset.percent_off,
+                asset.promotion_asset.promotion_code,
+                asset.promotion_asset.occasion,
+                asset.promotion_asset.redemption_start_date,
+                asset.promotion_asset.redemption_end_date
+            FROM asset
+            WHERE asset.id = {asset_id}
+            LIMIT 1
+        """))
+        if not back:
+            return ServiceResult(
+                success=False,
+                error=ApiError(
+                    code="NOT_APPLIED",
+                    message=f"Google accepted promotion creation (asset {asset_id}) but the asset could not be read back.",
+                    trigger=asset_id,
+                    field_path=["name"],
+                ),
+                telemetry=Telemetry(latency_ms=0.0),
+            )
+        stored = back[0].asset
+        sp = stored.promotion_asset
+        stored_pct = round(sp.percent_off / 10_000, 2) if getattr(sp, "percent_off", 0) else None
+        summary = (
+            f"'{stored.name}' | target='{sp.promotion_target}' | "
+            f"{f'{stored_pct:g}% off' if stored_pct is not None else discount_desc} | "
+            f"code='{getattr(sp, 'promotion_code', '') or 'none'}' | lang={getattr(sp, 'language_code', req.language_code)} | "
+            f"redemption={getattr(sp, 'redemption_start_date', '') or '..'}..{getattr(sp, 'redemption_end_date', '') or '..'}"
+        )
+
+    link_status = "not linked (library only)"
+    if req.campaign_id:
+        linked_ids = {row.campaign_asset.asset.split("/")[-1] for row in ga_service.search(customer_id=customer_id, query=f"""
+            SELECT campaign.id, campaign_asset.asset
+            FROM campaign_asset
+            WHERE campaign.id = '{req.campaign_id}'
+              AND campaign_asset.field_type = 'PROMOTION' AND campaign_asset.status != 'REMOVED'
+        """)}
+        if asset_id in linked_ids:
+            link_status = f"already linked to {target_label}"
+        else:
+            _link_assets(client, customer_id, req.campaign_id, [asset_id], client.enums.AssetFieldTypeEnum.PROMOTION)
+            link_status = f"linked to {target_label}"
+    elif req.ad_group_id:
+        linked_ids = {row.ad_group_asset.asset.split("/")[-1] for row in ga_service.search(customer_id=customer_id, query=f"""
+            SELECT ad_group.id, ad_group_asset.asset
+            FROM ad_group_asset
+            WHERE ad_group.id = '{req.ad_group_id}'
+              AND ad_group_asset.field_type = 'PROMOTION' AND ad_group_asset.status != 'REMOVED'
+        """)}
+        if asset_id in linked_ids:
+            link_status = f"already linked to {target_label}"
+        else:
+            ag_op = client.get_type("AdGroupAssetOperation")
+            aga = ag_op.create
+            aga.ad_group = client.get_service("AdGroupService").ad_group_path(customer_id, req.ad_group_id)
+            aga.asset = asset_service.asset_path(customer_id, asset_id)
+            aga.field_type = client.enums.AssetFieldTypeEnum.PROMOTION
+            client.get_service("AdGroupAssetService").mutate_ad_group_assets(customer_id=customer_id, operations=[ag_op])
+            link_status = f"linked to {target_label}"
+
+    verb = "Created" if created_new else "Reused existing"
+    return f"{verb} Promotion Asset {asset_id} ({summary}); {link_status}."
 
 
 @handle_google_ads_errors

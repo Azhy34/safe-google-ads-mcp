@@ -1,6 +1,6 @@
 """Request and answer models of the Shopping tools: a Standard Shopping campaign on the Merchant Center feed of the site."""
 import re
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -152,3 +152,18 @@ class ShoppingReadinessResponse(BaseModel):
     checks: List[ReadinessCheck] = Field(default_factory=list)
     gmc: Dict[str, Any] = Field(default_factory=dict, description="What Merchant Center said: program state, feed labels, product counts per country")
     ads: Dict[str, Any] = Field(default_factory=dict, description="What Google Ads said: link, product statuses it sees, other Shopping campaigns")
+
+
+class SetShoppingProductSelectionRequest(BaseModel):
+    ad_group_id: str = Field(..., pattern=r"^\d{5,15}$", description="Ad Group ID of the Shopping campaign")
+    offers: List[str] = Field(default_factory=list, description="List of offer IDs to advertise (max 100). All others will be excluded")
+    cpc_ceiling_eur: Optional[float] = Field(default=None, ge=0.10, le=3.00, description="Optional CPC ceiling for the new unit nodes (defaults to campaign ceiling or 0.50 EUR)")
+    dry_run: bool = Field(default=False, description="True: check and validate with Google via validate_only, write nothing")
+
+    @field_validator("offers")
+    @classmethod
+    def _offer_ids(cls, value: List[str]) -> List[str]:
+        if not value:
+            raise ValueError("offers cannot be empty; specify at least one offer ID")
+        return _clean_offers(value)
+

@@ -11,7 +11,7 @@ from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_googl
 from shield.models_adgroup import (
     GoogleAdGroupRecord, AdGroupBidUpdateRequest, AdGroupKeywordRecord, KeywordStatusUpdateRequest,
     AdGroupStatusUpdateRequest,
-    CreateAdGroupRequest, CreateAdGroupResponse, AddKeywordsRequest, AddKeywordsResponse
+    CreateAdGroupRequest, CreateAdGroupResponse, AddKeywordsRequest, AddKeywordsResponse, AdGroupAudienceTargetingRequest, AdGroupAudienceTargetingResponse
 )
 
 @handle_google_ads_errors
@@ -377,3 +377,116 @@ def add_ad_group_keywords(req: AddKeywordsRequest, customer_id: str = CUSTOMER_I
         keywords=added
     )
 
+
+
+@handle_google_ads_errors
+def set_ad_group_audience_targeting(
+    req: AdGroupAudienceTargetingRequest,
+    customer_id: str = CUSTOMER_ID
+) -> AdGroupAudienceTargetingResponse:
+    """
+    Configures audience targeting for an ad group (Search or Shopping).
+    Supports pure retargeting (TARGETING mode: reach narrowed to audience only)
+    or bid adjustments (OBSERVATION mode: reach not narrowed, bid adjustments applied).
+    Preserves existing demographic targeting dimensions to comply with API restrictions.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+    
+    # 1. Verify ad group exists and inspect current target restrictions
+    query_ag = f"""
+        SELECT 
+            ad_group.id, 
+            ad_group.name, 
+            ad_group.targeting_setting.target_restrictions
+        FROM ad_group
+        WHERE ad_group.id = {req.ad_group_id} AND ad_group.status != 'REMOVED'
+        LIMIT 1
+    """
+    ag_rows = list(ga_service.search(customer_id=customer_id, query=query_ag))
+    if not ag_rows:
+        raise ValueError(f"Ad group {req.ad_group_id} not found or removed in customer {customer_id}.")
+        
+    ag_row = ag_rows[0].ad_group
+    
+    # 2. Query existing user_list criteria to avoid duplicate insertions
+    query_crit = f"""
+        SELECT 
+            ad_group_criterion.criterion_id, 
+            ad_group_criterion.user_list.user_list
+        FROM ad_group_criterion
+        WHERE ad_group.id = {req.ad_group_id} 
+          AND ad_group_criterion.type = 'USER_LIST'
+          AND ad_group_criterion.status != 'REMOVED'
+    """
+    existing_user_lists = set()
+    for row in ga_service.search(customer_id=customer_id, query=query_crit):
+        ul_rn = row.ad_group_criterion.user_list.user_list
+        if ul_rn:
+            existing_user_lists.add(ul_rn.split("/")[-1])
+            
+    # 3. Build AdGroup mutate operation for targeting_setting.target_restrictions
+    mutate_operations = []
+    
+    op_ag = client.get_type("MutateOperation")
+    ag_update = op_ag.ad_group_operation.update
+    ag_update.resource_name = f"customers/{customer_id}/adGroups/{req.ad_group_id}"
+    
+    is_bid_only = (req.targeting_mode == "OBSERVATION")
+    
+    dimensions_config = [
+        (client.enums.TargetingDimensionEnum.AGE_RANGE, True),
+        (client.enums.TargetingDimensionEnum.GENDER, True),
+        (client.enums.TargetingDimensionEnum.PARENTAL_STATUS, True),
+        (client.enums.TargetingDimensionEnum.INCOME_RANGE, True),
+        (client.enums.TargetingDimensionEnum.AUDIENCE, is_bid_only),
+    ]
+    
+    for dim, bo in dimensions_config:
+        tr = client.get_type("TargetRestriction")
+        tr.targeting_dimension = dim
+        tr.bid_only = bo
+        ag_update.targeting_setting.target_restrictions.append(tr)
+        
+    op_ag.ad_group_operation.update_mask.paths.append("targeting_setting.target_restrictions")
+    mutate_operations.append(op_ag)
+    
+    # 4. Build AdGroupCriterion operations for user lists
+    attached = []
+    already_attached = []
+    
+    for uid in req.user_list_ids:
+        clean_uid = uid.strip()
+        if not clean_uid:
+            continue
+        if clean_uid in existing_user_lists:
+            already_attached.append(clean_uid)
+            continue
+            
+        m_crit = client.get_type("MutateOperation")
+        crit = m_crit.ad_group_criterion_operation.create
+        crit.ad_group = f"customers/{customer_id}/adGroups/{req.ad_group_id}"
+        crit.user_list.user_list = f"customers/{customer_id}/userLists/{clean_uid}"
+        crit.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+        if req.bid_modifier and is_bid_only:
+            crit.bid_modifier = req.bid_modifier
+        mutate_operations.append(m_crit)
+        attached.append(clean_uid)
+        
+    # 5. Execute MutateGoogleAdsRequest
+    req_mutate = client.get_type("MutateGoogleAdsRequest")
+    req_mutate.customer_id = customer_id
+    req_mutate.mutate_operations.extend(mutate_operations)
+    
+    ga_service.mutate(request=req_mutate)
+    
+    mode_desc = "TARGETING (reach narrowed to audience only - pure retargeting)" if req.targeting_mode == "TARGETING" else "OBSERVATION (bid adjustments only)"
+    msg = f"Successfully set ad group {req.ad_group_id} to {mode_desc}. Attached {len(attached)} new audiences ({', '.join(attached) if attached else 'none'}). Already attached: {len(already_attached)}."
+    
+    return AdGroupAudienceTargetingResponse(
+        ad_group_id=req.ad_group_id,
+        targeting_mode=req.targeting_mode,
+        attached_user_list_ids=attached,
+        already_attached_user_list_ids=already_attached,
+        message=msg
+    )

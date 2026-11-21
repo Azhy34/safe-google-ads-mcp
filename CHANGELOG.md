@@ -2,6 +2,20 @@
 
 All notable changes to `safe-google-ads-mcp`. Dates are ISO. Tool names are the MCP tool names.
 
+## 1.2.0 - 2026-11-21
+
+**63 tools (+4): Promotion assets, campaign start/end dates, ad group audience targeting, and Shopping product tree selection.**
+
+### Added: tools
+- `create_promotion_asset(name, promotion_target, final_url, ...)`: Creates a `PROMOTION` extension asset (percent or money off, optional coupon code or minimum order value, occasion enum, redemption and serving ISO dates), enforces `ads.url_rules` from the business policy, reuses identical existing assets, verifies stored fields via read-back, and optionally links to a campaign or ad group (`dry_run=True` preview supported).
+- `set_campaign_dates(campaign_id, end_date, start_date, clear_end_date, dry_run)`: Sets or clears campaign start/end dates via an explicit `update_mask` (`YYYY-MM-DD 00:00:00` / `23:59:59`, `2037-12-30` sentinel to clear) and confirms stored dates via read-back.
+- `set_ad_group_audience_targeting(ad_group_id, user_list_ids, targeting_mode, bid_modifier)`: Configures `TARGETING` (strict retargeting) or `OBSERVATION` (with optional bid modifier) audience settings on Search or Shopping ad groups while preserving demographic target restrictions and deduplicating existing user lists.
+- `set_shopping_product_selection(ad_group_id, offers, cpc_ceiling_eur, dry_run)`: Atomically updates the `LISTING_GROUP` product partition tree inside an existing Shopping ad group to include only the chosen eligible offers (`validate_only` when `dry_run=True`), excluding all other feed items.
+
+### Fixed & Tested
+- `set_conversion_action_goal`: fixed enum resolution via `ConversionActionStatusEnum.ConversionActionStatus`.
+- Expanded offline test suite covering all 4 new tools, Pydantic shields, read-back verification, and telemetry/audit logging.
+
 ## 1.1.1 - 2026-11-02
 
 **No niche business logic left in the code.** What was still specific to one wallpaper shop moved into the policy or became neutral.

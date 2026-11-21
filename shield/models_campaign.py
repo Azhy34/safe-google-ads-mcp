@@ -1,7 +1,11 @@
+from datetime import date
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core import policy
+
+NO_END_DATE = "2037-12-30"
+MAX_END_DATE = date(2037, 12, 30)
 
 class CampaignBudgetRecord(BaseModel):
     resource_name: Optional[str] = Field(None, description="Resource name of the budget")
@@ -80,3 +84,52 @@ class CreateCampaignResponse(BaseModel):
     status: str = Field(..., description="Campaign status (e.g. PAUSED)")
     cpc_ceiling_eur: float = Field(..., description="Configured CPC ceiling in EUR")
     keywords_count: int = Field(..., description="Number of keywords added")
+
+
+class CampaignDatesUpdateRequest(BaseModel):
+    campaign_id: str = Field(..., pattern=r"^\d{1,20}$", description="Numeric ID of the campaign to modify")
+    end_date: Optional[str] = Field(
+        default=None,
+        description="Last serving day in ISO YYYY-MM-DD (stored as 'YYYY-MM-DD 23:59:59' in account timezone; max 2037-12-30)",
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Optional start day in ISO YYYY-MM-DD (stored as 'YYYY-MM-DD 00:00:00'; only editable before campaign starts)",
+    )
+    clear_end_date: bool = Field(
+        default=False,
+        description="True to remove the end date (sets Google sentinel 2037-12-30 23:59:59). Mutually exclusive with end_date",
+    )
+    dry_run: bool = Field(default=False, description="True = validate and preview without writing to Google Ads")
+
+    @field_validator("end_date", "start_date", mode="before")
+    @classmethod
+    def _parse_iso_date(cls, value, info):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"{info.field_name} must be an ISO date string YYYY-MM-DD")
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        try:
+            return date.fromisoformat(cleaned).isoformat()
+        except ValueError as exc:
+            raise ValueError(f"{info.field_name} must be an ISO date YYYY-MM-DD, got '{value}'") from exc
+
+    @model_validator(mode="after")
+    def _validate_dates(self):
+        if self.end_date is None and self.start_date is None and not self.clear_end_date:
+            raise ValueError("Provide at least one of end_date, start_date, or clear_end_date=True")
+        if self.end_date is not None and self.clear_end_date:
+            raise ValueError("end_date and clear_end_date=True are mutually exclusive")
+        if self.end_date is not None:
+            parsed_end = date.fromisoformat(self.end_date)
+            if parsed_end < date.today():
+                raise ValueError(f"end_date '{self.end_date}' cannot be in the past")
+            if parsed_end > MAX_END_DATE:
+                raise ValueError(f"end_date '{self.end_date}' cannot exceed Google Ads maximum '{NO_END_DATE}'")
+        if self.start_date is not None and self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError(f"end_date '{self.end_date}' cannot be earlier than start_date '{self.start_date}'")
+        return self
+

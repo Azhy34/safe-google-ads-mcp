@@ -194,13 +194,14 @@ def severity_for(function: str, action_type: str, success: bool, error_code: Opt
 
 MUTATION_FUNCTIONS = {
     "create_search_campaign", "create_shopping_campaign", "update_campaign_location", "create_ad_group",
-    "update_campaign_status", "update_campaign_budget", "step_campaign_cpc_ceiling",
+    "update_campaign_status", "update_campaign_budget", "update_campaign_dates", "step_campaign_cpc_ceiling",
     "update_ad_group_bid", "deploy_golden_rsa", "update_ad_status", "link_asset_to_entity",
     "unlink_asset_from_entity", "create_price_asset", "sync_price_extension", "create_sitelink_assets",
-    "create_callout_assets", "create_structured_snippet_asset", "create_image_asset",
+    "create_callout_assets", "create_structured_snippet_asset", "create_promotion_asset", "create_image_asset",
     "apply_negative_shield", "add_negative_keywords", "sync_shared_negative_list",
     "auto_fix_collisions_and_dupes", "update_keyword_status", "update_ad_group_status", "remove_negative_keyword",
-    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords",
+    "upload_click_conversions", "set_conversion_action_goal", "add_ad_group_keywords", "set_ad_group_audience_targeting",
+    "set_shopping_product_selection",
 }
 
 

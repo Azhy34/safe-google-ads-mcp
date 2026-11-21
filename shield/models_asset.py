@@ -1,3 +1,4 @@
+from datetime import date
 from typing import List, Optional, Literal, Dict, Any
 from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -270,5 +271,130 @@ class SyncPriceExtensionRequest(BaseModel):
     price_type: Literal["PRODUCT_CATEGORIES", "PRODUCT_TIERS", "SERVICES"] = Field(default="PRODUCT_TIERS", description="Price extension type")
     price_qualifier: Literal["FROM", "UP_TO", "AVERAGE", "UNSPECIFIED"] = Field(default="FROM", description="Price qualifier")
     language_code: str = Field(default="de", description="2-letter language code")
+
+
+APPROVED_PROMOTION_OCCASIONS = (
+    "NEW_YEARS", "CHINESE_NEW_YEAR", "VALENTINES_DAY", "EASTER", "MOTHERS_DAY", "FATHERS_DAY",
+    "LABOR_DAY", "BACK_TO_SCHOOL", "HALLOWEEN", "BLACK_FRIDAY", "CYBER_MONDAY", "CHRISTMAS",
+    "BOXING_DAY", "INDEPENDENCE_DAY", "NATIONAL_DAY", "END_OF_SEASON", "WINTER_SALE", "SUMMER_SALE",
+    "FALL_SALE", "SPRING_SALE", "RAMADAN", "EID_AL_FITR", "EID_AL_ADHA", "SINGLES_DAY", "WOMENS_DAY",
+    "HOLI", "PARENTS_DAY", "ST_NICHOLAS_DAY", "CARNIVAL", "EPIPHANY", "ROSH_HASHANAH", "PASSOVER",
+    "HANUKKAH", "DIWALI", "NAVRATRI", "SONGKRAN", "YEAR_END_GIFT",
+)
+
+
+def _parse_iso_date(value: Optional[str], field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = date.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO date YYYY-MM-DD, got '{value}'") from exc
+    return parsed.isoformat()
+
+
+class CreatePromotionAssetRequest(BaseModel):
+    """
+    Request contract for create_promotion_asset.
+    Google Ads limits: promotion_target <= 20 chars, promotion_code <= 15 chars,
+    percent_off in 1..100 (API stores 1,000,000 = 100%, so percent_off * 10_000),
+    discount_type oneof (percent_off OR money_amount_off_eur),
+    promotion_trigger oneof (promotion_code OR orders_over_eur, optional).
+    """
+    name: str = Field(..., min_length=1, max_length=128, description="Descriptive asset name in Google Ads")
+    promotion_target: str = Field(..., min_length=1, max_length=20, description="Promoted item or category, max 20 characters")
+    final_url: str = Field(..., description="Destination https URL for the promotion asset")
+    language_code: str = Field(default="de", pattern=r"^[a-zA-Z]{2}(-[a-zA-Z]{2})?$", description="BCP-47 language code, e.g. 'de', 'es', 'fr', 'en'")
+    percent_off: Optional[int] = Field(default=None, ge=1, le=100, description="Percentage discount 1 to 100 (e.g. 10 for 10%). Mutually exclusive with money_amount_off_eur")
+    money_amount_off_eur: Optional[float] = Field(default=None, gt=0, le=10000, description="Fixed monetary discount (e.g. 15.0). Mutually exclusive with percent_off")
+    currency_code: str = Field(default="EUR", pattern=r"^[A-Z]{3}$", description="ISO-4217 currency code (default EUR)")
+    discount_modifier: Optional[Literal["UP_TO"]] = Field(default=None, description="Optional modifier: 'UP_TO'")
+    promotion_code: Optional[str] = Field(default=None, min_length=1, max_length=15, description="Optional coupon code, max 15 chars (leave empty for automatic sales)")
+    orders_over_eur: Optional[float] = Field(default=None, gt=0, le=100000, description="Optional minimum order value (mutually exclusive with promotion_code)")
+    occasion: Optional[str] = Field(default=None, description="Optional Google occasion enum, e.g. BLACK_FRIDAY, CYBER_MONDAY, CHRISTMAS, WINTER_SALE")
+    redemption_start_date: Optional[str] = Field(default=None, description="Optional promo redemption start date YYYY-MM-DD")
+    redemption_end_date: Optional[str] = Field(default=None, description="Optional promo redemption end date YYYY-MM-DD")
+    start_date: Optional[str] = Field(default=None, description="Optional asset serving start date YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, description="Optional asset serving end date YYYY-MM-DD")
+    campaign_id: Optional[str] = Field(default=None, pattern=r"^\d{1,20}$", description="Optional Campaign ID to link the promotion immediately")
+    ad_group_id: Optional[str] = Field(default=None, pattern=r"^\d{1,20}$", description="Optional Ad Group ID to link the promotion immediately (mutually exclusive with campaign_id)")
+    dry_run: bool = Field(default=False, description="True = validate and preview without writing to Google Ads")
+
+    @field_validator("name", "promotion_target", "final_url", "promotion_code", mode="before")
+    @classmethod
+    def _strip_strings(cls, value):
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("language_code", mode="before")
+    @classmethod
+    def _normalize_language(cls, value):
+        if not isinstance(value, str):
+            return value
+        parts = value.strip().split("-")
+        if len(parts) == 2:
+            return f"{parts[0].lower()}-{parts[1].upper()}"
+        return parts[0].lower()
+
+    @field_validator("currency_code", "discount_modifier", "occasion", mode="before")
+    @classmethod
+    def _upper_optional(cls, value):
+        if isinstance(value, str):
+            stripped = value.strip().upper()
+            return stripped or None
+        return value
+
+    @field_validator("occasion")
+    @classmethod
+    def _validate_occasion(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in APPROVED_PROMOTION_OCCASIONS:
+            raise ValueError(f"Unsupported promotion occasion '{value}'. Allowed: {', '.join(APPROVED_PROMOTION_OCCASIONS)}")
+        return value
+
+    @field_validator("final_url")
+    @classmethod
+    def _validate_https_url(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if parts.scheme != "https" or not parts.hostname:
+            raise ValueError(f"final_url must be a valid https:// URL, got '{value}'")
+        return value
+
+    @field_validator("redemption_start_date", "redemption_end_date", "start_date", "end_date")
+    @classmethod
+    def _validate_dates(cls, value: Optional[str], info) -> Optional[str]:
+        return _parse_iso_date(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _validate_promotion_rules(self):
+        if (self.percent_off is None) == (self.money_amount_off_eur is None):
+            raise ValueError("Provide exactly one discount: either percent_off (1-100) or money_amount_off_eur")
+        if self.promotion_code is not None and self.orders_over_eur is not None:
+            raise ValueError("promotion_code and orders_over_eur are mutually exclusive in Google Ads (oneof promotion_trigger)")
+        if self.campaign_id and self.ad_group_id:
+            raise ValueError("Provide either campaign_id or ad_group_id, not both")
+        if self.redemption_start_date and self.redemption_end_date and self.redemption_end_date < self.redemption_start_date:
+            raise ValueError("redemption_end_date cannot be earlier than redemption_start_date")
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be earlier than start_date")
+
+        # Policy URL shield: forbid disallowed query parameters or terms on restricted hosts (e.g. direct site without coupons)
+        url_lower = self.final_url.lower()
+        checked_texts = [t for t in (self.name, self.promotion_target, self.promotion_code) if t]
+        for rule in policy.url_rules():
+            if rule.host_contains not in url_lower:
+                continue
+            if rule.forbid_query and rule.forbid_query in self.final_url:
+                raise ValueError(rule.message or f"final_url on {rule.host_contains} must not include '{rule.forbid_query}' (policy ads.url_rules)")
+            for word in rule.forbid_text:
+                for text in checked_texts:
+                    if word.upper() in text.upper():
+                        raise ValueError(f"{rule.message or 'policy ads.url_rules'}: remove '{word}' from '{text}'")
+        return self
+
 
 

@@ -1,5 +1,5 @@
 # 🛡️ Safe Google Ads FastMCP Server
-> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **59 purpose-built tools**, and **W3C distributed tracing**.
+> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **63 purpose-built tools**, and **W3C distributed tracing**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -132,17 +132,17 @@ Parent Tool Span: tools/call audit_campaign_4level_shield [3378.7 ms]
 
 ---
 
-## 🧰 59 Custom FastMCP Tools Catalog
+## 🧰 63 Custom FastMCP Tools Catalog
 
 The tools mirror Google Ads operational hierarchy, split into granular objects and transactional Smart Facades:
 
 | Operational Level | Key MCP Tools | Responsibilities |
 |---|---|---|
 | **🚦 Gate & Health** | `preflight_log_check`, `analyze_tool_health` | Mandatory pre-flight lock; anomaly & error spike audit. |
-| **📢 Campaigns & Bids** | `create_search_campaign`, `create_shopping_campaign`, `set_campaign_location`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search campaign creation with clean search networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`. Shopping campaigns on the Merchant Center feed (always paused, dry run first) and country on/off inside an existing campaign (never the last one). |
-| **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `set_ad_group_status`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, cross-group collision fixer. Guarded status switch for a whole ad group (never the last enabled one, never a half-built one). |
+| **📢 Campaigns & Bids** | `create_search_campaign`, `create_shopping_campaign`, `set_shopping_product_selection`, `set_campaign_location`, `set_campaign_dates`, `get_campaigns`, `get_campaign_details`, `step_bid_threshold`, `set_campaign_daily_budget`, `toggle_campaign_status` | Automated Search & Shopping campaign creation with clean networks, dayparting & criteria; CPC ceilings stepped strictly by `±0.05 EUR`; country on/off, start/end dates, and product partition tree selection. |
+| **👥 Groups & Keywords** | `create_ad_group`, `add_ad_group_keywords`, `get_ad_groups`, `get_ad_group_keywords`, `set_keyword_status`, `set_ad_group_status`, `set_ad_group_audience_targeting`, `auto_fix_collisions_and_dupes` | Hub & Spoke ad group deployment, positive exact/phrase keyword batches, audience `TARGETING`/`OBSERVATION` configuration, cross-group collision fixer, and guarded group status switching. |
 | **✍️ RSA Ads & Facades** | `get_campaign_ads`, `deploy_golden_rsa`, `set_ad_status` | **Smart Facade:** Enforces 15 headlines & 4 descriptions, Dynamic Keyword Insertion (DKI), in-place mutation via `AdService.mutate_ads`, and status toggles with last-active ad safeguards. |
-| **🧩 Google Assets** | `create_price_asset`, `create_image_asset`, `get_assets_associations`, `get_campaign_images`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price extensions, Sitelinks, Callouts, Structured Snippets with Google approved headers, and asset performance labeling. Own-site images cropped to 1.91:1 / 1:1 and linked per ad group as `AD_IMAGE`; filtered reads of what a campaign or ad group shows. |
+| **🧩 Google Assets** | `create_price_asset`, `create_image_asset`, `create_promotion_asset`, `get_assets_associations`, `get_campaign_images`, `sync_price_extension`, `preview_sitelink_assets`, `create_sitelink_assets`, `create_callout_assets`, `create_structured_snippet_asset`, `link_asset_to_entity`, `unlink_asset_from_entity`, `get_assets_diversity`, `get_assets_performance` | Price, Sitelink, Callout, Structured Snippet, and Promotion extensions with policy shields, read-back checks, and asset performance labeling; own-site images cropped to 1.91:1 / 1:1 and linked per ad group as `AD_IMAGE`. |
 | **🧹 Negative Shields** | `apply_negative_shield`, `sync_shared_negative_list`, `mine_search_terms_and_harvest_negatives`, `add_negative_keywords`, `remove_negative_keyword` | E-commerce waste harvesting, multi-country negative keyword sets, and atomic shared negative list sync. |
 | **🎯 Conversions & Tracking** | `check_enhanced_conversions_status`, `set_conversion_action_goal`, `upload_click_conversion` | Enhanced Conversions audit (Customer Data Terms, DMA compliance), Primary/Secondary goal steering for Smart Bidding, and hashed offline conversion upload. |
 | **💳 Billing & Merchant Link** | `get_google_ads_invoices`, `check_merchant_center_link`, `check_shopping_readiness`, `audit_geo_physical_locations`, `get_demand_gen_currency_floor` | Official PDF invoices retrieval, Merchant Center product link audits, physical geo leakage discovery, and currency budget floors. Two-sided Shopping readiness (Ads + Merchant Center). |
@@ -229,8 +229,7 @@ and images may use, your Shopping campaign prefix, the countries you deliver to.
 shield (`REQUEST_REJECTED`) before any call to Google. See [docs/POLICY.md](docs/POLICY.md).
 
 ## 📝 Changelog
-See [CHANGELOG.md](CHANGELOG.md): **1.1.0** adds `set_ad_group_status`, `set_campaign_location`, `create_image_asset`,
-`create_shopping_campaign` and `check_shopping_readiness` (59 tools), the policy layer and three skills.
+See [CHANGELOG.md](CHANGELOG.md): **1.2.0** adds `create_promotion_asset`, `set_campaign_dates`, `set_ad_group_audience_targeting`, and `set_shopping_product_selection` (63 tools). **1.1.0** introduced `set_ad_group_status`, `set_campaign_location`, `create_image_asset`, `create_shopping_campaign`, `check_shopping_readiness`, and the business policy layer.
 
 ---
 

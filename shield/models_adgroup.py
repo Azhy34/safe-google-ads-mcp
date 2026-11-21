@@ -66,3 +66,23 @@ class AddKeywordsResponse(BaseModel):
     added_count: int = Field(..., description="Number of keywords added")
     keywords: list[str] = Field(..., description="List of added keywords")
 
+class AdGroupAudienceTargetingRequest(BaseModel):
+    ad_group_id: str = Field(..., pattern=r"^\d+$", description="Ad Group ID to configure audience targeting")
+    user_list_ids: list[str] = Field(..., min_length=1, description="List of UserList IDs to attach")
+    targeting_mode: Literal["TARGETING", "OBSERVATION"] = Field(
+        default="TARGETING",
+        description="TARGETING (narrow reach to audience only - pure retargeting) or OBSERVATION (do not narrow reach, bid adjustments only)"
+    )
+    bid_modifier: Optional[float] = Field(
+        default=None,
+        ge=0.1,
+        le=10.0,
+        description="Optional bid modifier for criteria (e.g. 1.5 for +50%, 1.8 for +80%). Only valid in OBSERVATION mode."
+    )
+
+class AdGroupAudienceTargetingResponse(BaseModel):
+    ad_group_id: str = Field(..., description="Ad Group ID")
+    targeting_mode: str = Field(..., description="Configured targeting mode (TARGETING or OBSERVATION)")
+    attached_user_list_ids: list[str] = Field(..., description="List of UserList IDs successfully attached")
+    already_attached_user_list_ids: list[str] = Field(default_factory=list, description="List of UserList IDs that were already attached")
+    message: str = Field(..., description="Summary message of the operation")

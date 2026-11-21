@@ -16,7 +16,7 @@ language criterion (Google refuses it: the language is the feed's, seen live 31.
 """
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -26,7 +26,7 @@ from core.client import get_ads_client, eur_to_micros
 from core import policy
 from core.config import CUSTOMER_ID
 from shield.error_shield import ApiError, ServiceResult, Telemetry, handle_google_ads_errors
-from shield.models_shopping import CheckShoppingReadinessRequest, CreateShoppingCampaignRequest
+from shield.models_shopping import CheckShoppingReadinessRequest, CreateShoppingCampaignRequest, SetShoppingProductSelectionRequest
 from tools.shopping_readiness_tools import assess_shopping_readiness
 from tools.shopping_selection import resolve_selection
 
@@ -352,3 +352,173 @@ def create_shopping_campaign(req: CreateShoppingCampaignRequest, customer_id: st
             f"{row.campaign.shopping_setting.merchant_id} / {row.campaign.shopping_setting.feed_label}, ad group {ad_group_id}, "
             f"products: {_selection_text(req, item_ids, source, notes)}, product tree {len(tree_rows)} node(s), {excluded} excluded; {seen}. "
             f"Readiness: {_readiness_text(readiness)}. Enable with toggle_campaign_status only after the owner's yes.")
+
+
+def _placeholder_campaign_name() -> str:
+    """
+    A valid campaign name for the selection check, which needs a CreateShoppingCampaignRequest but creates no campaign. It starts
+    with the policy's shopping.name_prefix (the request model insists on it when one is set), so the advertiser's name is
+    never written in the code: a public copy of this file carries no private word.
+    """
+    return f"{policy.text('shopping.name_prefix')} selection check".strip()
+
+
+@handle_google_ads_errors
+def set_shopping_product_selection(req: SetShoppingProductSelectionRequest, customer_id: str = CUSTOMER_ID) -> str:
+    """
+    Updates the product partition tree in an existing Shopping ad group to advertise exactly the specified offers.
+    All other products in the feed are excluded under the negative 'everything else' node.
+    dry_run=True sends the request with validate_only to Google Ads API.
+    """
+    client = get_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+
+    ad_group_rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT ad_group.id, ad_group.name, ad_group.campaign,
+               campaign.id, campaign.name, campaign.target_spend.cpc_bid_ceiling_micros,
+               campaign.shopping_setting.merchant_id, campaign.shopping_setting.feed_label
+        FROM ad_group
+        WHERE ad_group.id = {req.ad_group_id} AND ad_group.status != 'REMOVED' LIMIT 1
+    """))
+    if not ad_group_rows:
+        return _refusal("AD_GROUP_NOT_FOUND", f"Ad group {req.ad_group_id} was not found or is removed.", req.ad_group_id, "ad_group_id")
+
+    ag = ad_group_rows[0].ad_group
+    camp = ad_group_rows[0].campaign
+    merchant_id = str(camp.shopping_setting.merchant_id)
+    feed_label = camp.shopping_setting.feed_label
+    campaign_ceiling = camp.target_spend.cpc_bid_ceiling_micros or eur_to_micros(0.50)
+    ceiling = eur_to_micros(req.cpc_ceiling_eur) if req.cpc_ceiling_eur else campaign_ceiling
+    ad_group_rn = _rn(customer_id, "adGroups", req.ad_group_id)
+
+    dummy_req = CreateShoppingCampaignRequest(
+        name=_placeholder_campaign_name(),
+        merchant_id=merchant_id,
+        feed_label=feed_label,
+        offers=req.offers
+    )
+    resolution = resolve_selection(ga_service, customer_id, dummy_req)
+    if resolution.unreadable:
+        return _refusal("CATALOG_NOT_READABLE", "Neither Google Ads nor Merchant Center could list the products, so the offers cannot be checked.", ", ".join(req.offers), "offers")
+    if resolution.unknown:
+        return _refusal("OFFER_NOT_FOUND", f"The catalog has no offer {', '.join(resolution.unknown)} (looked in {resolution.source}).", ", ".join(resolution.unknown), "offers")
+    if resolution.not_eligible:
+        return _refusal("OFFER_NOT_ELIGIBLE", f"Merchant Center disapproved {', '.join(resolution.not_eligible)} for Shopping ads.", ", ".join(resolution.not_eligible), "offers")
+
+    target_item_ids = resolution.item_ids
+
+    tree_rows = list(ga_service.search(customer_id=customer_id, query=f"""
+        SELECT 
+            ad_group_criterion.resource_name,
+            ad_group_criterion.criterion_id,
+            ad_group_criterion.listing_group.type,
+            ad_group_criterion.listing_group.parent_ad_group_criterion,
+            ad_group_criterion.listing_group.case_value.product_item_id.value,
+            ad_group_criterion.negative
+        FROM ad_group_criterion
+        WHERE ad_group.id = {req.ad_group_id} AND ad_group_criterion.type = 'LISTING_GROUP' AND ad_group_criterion.status != 'REMOVED'
+    """))
+
+    operations = []
+    subdivision_row = None
+    negative_rest_row = None
+    existing_units: Dict[str, Any] = {}
+
+    for r in tree_rows:
+        c = r.ad_group_criterion
+        if c.listing_group.type_.name == "SUBDIVISION":
+            subdivision_row = r
+        elif c.negative:
+            negative_rest_row = r
+        elif c.listing_group.type_.name == "UNIT" and c.listing_group.case_value.product_item_id.value:
+            existing_units[c.listing_group.case_value.product_item_id.value.lower()] = r
+
+    target_keys = {item.lower() for item in target_item_ids}
+    removed_count = 0
+    created_count = 0
+
+    if subdivision_row:
+        root_rn = subdivision_row.ad_group_criterion.resource_name
+        for key, row in existing_units.items():
+            if key not in target_keys:
+                op = client.get_type("MutateOperation")
+                op.ad_group_criterion_operation.remove = row.ad_group_criterion.resource_name
+                operations.append(op)
+                removed_count += 1
+
+        for item_id in target_item_ids:
+            if item_id.lower() not in existing_units:
+                op = client.get_type("MutateOperation")
+                node = op.ad_group_criterion_operation.create
+                node.ad_group = ad_group_rn
+                node.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+                node.listing_group.type_ = client.enums.ListingGroupTypeEnum.UNIT
+                node.listing_group.parent_ad_group_criterion = root_rn
+                node.listing_group.case_value.product_item_id.value = item_id
+                node.cpc_bid_micros = ceiling
+                operations.append(op)
+                created_count += 1
+
+        if not negative_rest_row:
+            op = client.get_type("MutateOperation")
+            rest = op.ad_group_criterion_operation.create
+            rest.ad_group = ad_group_rn
+            rest.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+            rest.listing_group.type_ = client.enums.ListingGroupTypeEnum.UNIT
+            rest.listing_group.parent_ad_group_criterion = root_rn
+            rest.listing_group.case_value.product_item_id._pb.SetInParent()
+            rest.negative = True
+            operations.append(op)
+    else:
+        for r in tree_rows:
+            op = client.get_type("MutateOperation")
+            op.ad_group_criterion_operation.remove = r.ad_group_criterion.resource_name
+            operations.append(op)
+
+        root_rn = _rn(customer_id, "adGroupCriteria", f"{req.ad_group_id}~{TEMP_TREE_ROOT}")
+        op = client.get_type("MutateOperation")
+        root = op.ad_group_criterion_operation.create
+        root.resource_name = root_rn
+        root.ad_group = ad_group_rn
+        root.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+        root.listing_group.type_ = client.enums.ListingGroupTypeEnum.SUBDIVISION
+        operations.append(op)
+
+        for item_id in target_item_ids:
+            op = client.get_type("MutateOperation")
+            node = op.ad_group_criterion_operation.create
+            node.ad_group = ad_group_rn
+            node.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+            node.listing_group.type_ = client.enums.ListingGroupTypeEnum.UNIT
+            node.listing_group.parent_ad_group_criterion = root_rn
+            node.listing_group.case_value.product_item_id.value = item_id
+            node.cpc_bid_micros = ceiling
+            operations.append(op)
+            created_count += 1
+
+        op = client.get_type("MutateOperation")
+        rest = op.ad_group_criterion_operation.create
+        rest.ad_group = ad_group_rn
+        rest.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+        rest.listing_group.type_ = client.enums.ListingGroupTypeEnum.UNIT
+        rest.listing_group.parent_ad_group_criterion = root_rn
+        rest.listing_group.case_value.product_item_id._pb.SetInParent()
+        rest.negative = True
+        operations.append(op)
+
+    if not operations:
+        return f"Ad group {req.ad_group_id} already has the exact selection of {len(target_item_ids)} offers. No changes needed."
+
+    kept_count = len(target_item_ids) - created_count
+    plan = (f"Ad group {req.ad_group_id} ('{ag.name}'): update product selection to {len(target_item_ids)} offers "
+            f"({kept_count} kept, {created_count} added, {removed_count} removed; everything else excluded).")
+
+    if req.dry_run:
+        _mutate(client, ga_service, customer_id, operations, validate_only=True)
+        return f"DRY RUN: {plan} Google verified the operations via validate_only. Nothing was written."
+
+    response = _mutate(client, ga_service, customer_id, operations)
+    return (f"Product selection updated for ad group {req.ad_group_id} ('{ag.name}') in campaign '{camp.name}': "
+            f"{len(target_item_ids)} offers active ({kept_count} kept, {created_count} added, {removed_count} removed), "
+            f"all other feed products excluded; ceiling {ceiling / 1e6:.2f} EUR.")
+

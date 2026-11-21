@@ -30,9 +30,10 @@ from google.oauth2.credentials import Credentials
 from core.merchant_client import MerchantApiError
 from shield import cloud_sink, error_shield
 from shield.error_shield import MUTATION_FUNCTIONS
-from shield.models_shopping import CreateShoppingCampaignRequest, ReadinessCheck, ShoppingReadinessResponse
+from shield.models_shopping import CreateShoppingCampaignRequest, ReadinessCheck, SetShoppingProductSelectionRequest, ShoppingReadinessResponse
 from tools.shopping_tools import (
     build_campaign_operations, build_listing_tree_operations, create_shopping_campaign, criterion_as_mutate_operation,
+    set_shopping_product_selection,
 )
 
 NAME = "ExampleShop Shopping DE - Site"
@@ -463,6 +464,98 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual((result.error.code, result.error.field_path), ("CATALOG_NOT_READABLE", ["offers"]))
         self.assertEqual(state["mutates"], [])
+
+
+class ProductSelectionTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for patcher in (mock.patch.object(error_shield, "AUDIT_FILE", Path(tmp.name) / "audit.jsonl"),
+                        mock.patch.dict(cloud_sink._state, {"started": True, "logger": None, "tracer": None}),
+                        mock.patch.dict(os.environ, {"MCP_PREFLIGHT_REQUIRED": "0"})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def make(self):
+        client = real_client()
+        ga = mock.MagicMock()
+        state = {"mutates": []}
+
+        def node(cid, kind, value="", negative=False, parent=""):
+            return SimpleNamespace(ad_group_criterion=SimpleNamespace(
+                resource_name=f"customers/1/adGroupCriteria/77777~{cid}",
+                criterion_id=cid,
+                listing_group=SimpleNamespace(
+                    type_=SimpleNamespace(name=kind),
+                    parent_ad_group_criterion=parent,
+                    case_value=SimpleNamespace(product_item_id=SimpleNamespace(value=value)),
+                ),
+                negative=negative,
+            ))
+
+        def search(customer_id, query):
+            if "FROM ad_group\n" in query or "FROM ad_group " in query:
+                return [SimpleNamespace(
+                    ad_group=SimpleNamespace(id=77777, name="All Products"),
+                    campaign=SimpleNamespace(
+                        id=555, name=NAME,
+                        target_spend=SimpleNamespace(cpc_bid_ceiling_micros=500_000),
+                        shopping_setting=SimpleNamespace(merchant_id=1234567890, feed_label="EXAMPLE_FEED"),
+                    ),
+                )]
+            if "FROM shopping_product" in query:
+                return [SimpleNamespace(shopping_product=SimpleNamespace(
+                    merchant_center_id=1234567890, feed_label="EXAMPLE_FEED", item_id=item)) for item in CATALOG]
+            if "FROM ad_group_criterion" in query:
+                return [
+                    node(1, "SUBDIVISION"),
+                    node(2, "UNIT", value="sku-003-clearance", parent="customers/1/adGroupCriteria/77777~1"),
+                    node(3, "UNIT", value="sku-003-M", parent="customers/1/adGroupCriteria/77777~1"),
+                    node(4, "UNIT", value="", negative=True, parent="customers/1/adGroupCriteria/77777~1"),
+                ]
+            raise AssertionError(f"unexpected query: {query}")
+
+        def mutate(request):
+            state["mutates"].append((list(request.mutate_operations), request.validate_only))
+            return SimpleNamespace(mutate_operation_responses=[])
+
+        ga.search.side_effect = search
+        ga.mutate.side_effect = mutate
+        client.get_service = lambda name: ga
+        return client, state
+
+    def test_selection_is_a_mutation_and_returns_serialisable_service_result(self):
+        self.assertIn("set_shopping_product_selection", MUTATION_FUNCTIONS)
+        client, state = self.make()
+        req = SetShoppingProductSelectionRequest(ad_group_id="77777", offers=["SKU-003-clearance", "SKU-003-L"],
+                                                 cpc_ceiling_eur=0.55, dry_run=True)
+        with mock.patch("tools.shopping_tools.get_ads_client", return_value=client), \
+                mock.patch("tools.shopping_selection.merchant_pages", return_value=GMC_CATALOG):
+            dry = set_shopping_product_selection(req, customer_id=CID)
+        self.assertIsInstance(dry, error_shield.ServiceResult)
+        self.assertTrue(dry.success, dry.error)
+        self.assertIn("DRY RUN:", dry.data)
+        self.assertIn('"success": true', dry.model_dump_json(indent=2).lower())
+        self.assertEqual([v for _, v in state["mutates"]], [True])
+
+        req_live = SetShoppingProductSelectionRequest(ad_group_id="77777", offers=["SKU-003-clearance", "SKU-003-L"],
+                                                      cpc_ceiling_eur=0.55, dry_run=False)
+        with mock.patch("tools.shopping_tools.get_ads_client", return_value=client), \
+                mock.patch("tools.shopping_selection.merchant_pages", return_value=GMC_CATALOG):
+            live = set_shopping_product_selection(req_live, customer_id=CID)
+        self.assertIsInstance(live, error_shield.ServiceResult)
+        self.assertTrue(live.success, live.error)
+        self.assertIn("1 kept, 1 added, 1 removed", live.data)
+        self.assertIn('"success": true', live.model_dump_json(indent=2).lower())
+        written = [ops for ops, validate_only in state["mutates"] if not validate_only]
+        self.assertEqual(len(written), 1)
+        removed = [op.ad_group_criterion_operation.remove for op in written[0]
+                   if op._pb.WhichOneof("operation") == "ad_group_criterion_operation" and op.ad_group_criterion_operation.remove]
+        created = [op.ad_group_criterion_operation.create for op in written[0]
+                   if op._pb.WhichOneof("operation") == "ad_group_criterion_operation" and op.ad_group_criterion_operation.create.ad_group]
+        self.assertEqual(removed, ["customers/1/adGroupCriteria/77777~3"])
+        self.assertEqual([c.listing_group.case_value.product_item_id.value for c in created], ["sku-003-L"])
+        self.assertEqual(created[0].cpc_bid_micros, 550_000)
 
 
 if __name__ == "__main__":

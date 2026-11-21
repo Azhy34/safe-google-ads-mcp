@@ -48,11 +48,11 @@ MAX_VIOLATIONS = 100
 LEVER_GROUPS: Dict[str, Tuple[str, ...]] = {
     "bid": ("step_campaign_cpc_ceiling", "update_ad_group_bid"),
     "budget": ("update_campaign_budget",),
-    "status": ("update_campaign_status", "update_keyword_status", "update_ad_group_status"),
+    "status": ("update_campaign_status", "update_campaign_dates", "update_keyword_status", "update_ad_group_status"),
     "negatives": ("apply_negative_shield", "add_negative_keywords", "remove_negative_keyword"),
     "ads": ("deploy_golden_rsa", "update_ad_status"),
-    "assets": ("link_asset_to_entity", "unlink_asset_from_entity", "create_image_asset"),
-    "targeting": ("update_campaign_location",),
+    "assets": ("link_asset_to_entity", "unlink_asset_from_entity", "create_image_asset", "create_promotion_asset"),
+    "targeting": ("update_campaign_location", "set_ad_group_audience_targeting"),
 }
 
 def _group_of(function: str) -> str:

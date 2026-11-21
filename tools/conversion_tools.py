@@ -359,7 +359,7 @@ def set_conversion_action_goal(req: SetConversionActionGoalRequest, customer_id:
     # primary_for_goal=False went to Google as an update of nothing and came back "successful" (30.10.2026).
     paths = ["primary_for_goal"]
     if req.status:
-        ca.status = getattr(client.enums.ConversionActionStatusEnum, req.status.upper())
+        ca.status = getattr(client.enums.ConversionActionStatusEnum.ConversionActionStatus, req.status.upper())
         paths.append("status")
     if req.include_in_conversions_metric is not None:
         ca.include_in_conversions_metric = req.include_in_conversions_metric

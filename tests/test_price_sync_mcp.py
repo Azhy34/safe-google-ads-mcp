@@ -342,7 +342,11 @@ class ServerRegistrationConsistencyTests(unittest.TestCase):
         self.assertIn("create_shopping_campaign", tools)
         self.assertIn("set_campaign_location", tools)
         self.assertIn("check_shopping_readiness", tools)
-        self.assertEqual(len(tools), 59)
+        self.assertIn("set_ad_group_audience_targeting", tools)
+        self.assertIn("set_shopping_product_selection", tools)
+        self.assertIn("create_promotion_asset", tools)
+        self.assertIn("set_campaign_dates", tools)
+        self.assertEqual(len(tools), 63)
 
     def test_registered_tool_schema_matches(self):
         import server

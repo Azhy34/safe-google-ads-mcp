@@ -23,15 +23,15 @@ from shield.telemetry import current_tool
 from shield import cloud_sink
 from shield.models_campaign import (
     CampaignStatusUpdateRequest, CampaignBudgetUpdateRequest, CampaignCeilingStepRequest,
-    IdArguments, CreateSearchCampaignRequest
+    CampaignDatesUpdateRequest, IdArguments, CreateSearchCampaignRequest
 )
 from shield.models_adgroup import (
-    AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, AdGroupStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest
+    AdGroupBidUpdateRequest, KeywordStatusUpdateRequest, AdGroupStatusUpdateRequest, CreateAdGroupRequest, AddKeywordsRequest, AdGroupAudienceTargetingRequest
 )
 from shield.models_ad import DeployGoldenRSARequest, AdStatusUpdateRequest
 from shield.models_asset import (
     LinkAssetRequest, UnlinkAssetRequest, CreatePriceAssetRequest, SyncPriceExtensionRequest, CreateSitelinkAssetsRequest,
-    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest, AssetAssociationsRequest,
+    CreateCalloutAssetsRequest, CreateStructuredSnippetAssetRequest, CreatePromotionAssetRequest, AssetAssociationsRequest,
 )
 from shield.models_criterion import (
     ApplyNegativeShieldRequest, RemoveNegativeKeywordRequest, SyncSharedNegativeListRequest
@@ -39,7 +39,7 @@ from shield.models_criterion import (
 
 from tools.campaign_tools import (
     list_campaigns, get_campaign_detail, 
-    update_campaign_status, update_campaign_budget, step_campaign_cpc_ceiling,
+    update_campaign_status, update_campaign_budget, update_campaign_dates, step_campaign_cpc_ceiling,
     get_campaign_targeting_overview as targeting_func,
     create_search_campaign as create_campaign_func
 )
@@ -47,7 +47,8 @@ from tools.adgroup_tools import (
     list_ad_groups, update_ad_group_bid, update_keyword_status, update_ad_group_status,
     get_ad_group_keywords as adgroup_keywords_func,
     create_ad_group as create_adgroup_func,
-    add_ad_group_keywords as add_keywords_func
+    add_ad_group_keywords as add_keywords_func,
+    set_ad_group_audience_targeting as audience_targeting_func
 )
 
 from tools.rsa_tools import list_campaign_ads, deploy_golden_rsa as rsa_deploy_func, update_ad_status as update_ad_status_func
@@ -64,6 +65,7 @@ from tools.asset_tools import (
     create_sitelink_assets as create_sitelinks_func,
     create_callout_assets as create_callouts_func,
     create_structured_snippet_asset as create_snippet_func,
+    create_promotion_asset as create_promotion_func,
     get_campaign_assets_overview as assets_overview_func
 )
 from tools.negative_tools import (
@@ -99,8 +101,8 @@ from tools.billing_tools import get_google_ads_invoices as invoices_func
 from tools.merchant_tools import check_merchant_center_link as mc_link_func
 from shield.models_image import CreateImageAssetRequest
 from tools.image_tools import create_image_asset as create_image_func
-from shield.models_shopping import CreateShoppingCampaignRequest, CheckShoppingReadinessRequest
-from tools.shopping_tools import create_shopping_campaign as create_shopping_func
+from shield.models_shopping import CreateShoppingCampaignRequest, CheckShoppingReadinessRequest, SetShoppingProductSelectionRequest
+from tools.shopping_tools import create_shopping_campaign as create_shopping_func, set_shopping_product_selection as set_shopping_product_selection_func
 from tools.shopping_readiness_tools import check_shopping_readiness as shopping_readiness_func
 from shield.models_location import CampaignLocationRequest
 from tools.location_tools import update_campaign_location as update_location_func
@@ -260,6 +262,36 @@ def set_campaign_location(campaign_id: str, geo_target_id: int, enabled: bool) -
     res = update_location_func(req)
     return res.model_dump_json(indent=2)
 
+# [write] Set or clear campaign start/end dates (end_date in YYYY-MM-DD stops serving at 23:59:59 account time; dry_run=True previews). Journal name: update_campaign_dates.
+@mcp_tool()
+def set_campaign_dates(
+    campaign_id: str,
+    end_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    clear_end_date: bool = False,
+    dry_run: bool = False
+) -> str:
+    """
+    Sets campaign start and/or end dates in Google Ads using an explicit update_mask and verifies via read-back.
+    - end_date: last serving day in ISO YYYY-MM-DD (stored as 'YYYY-MM-DD 23:59:59' in account timezone; max 2037-12-30).
+    - start_date: optional start day in ISO YYYY-MM-DD (stored as 'YYYY-MM-DD 00:00:00'; only editable before campaign starts).
+    - clear_end_date: True to remove the end date (sets Google sentinel 2037-12-30 23:59:59). Mutually exclusive with end_date.
+    - dry_run: True validates and previews current vs new dates without writing to Google Ads.
+    """
+    req, rejected = build_request(
+        "update_campaign_dates",
+        CampaignDatesUpdateRequest,
+        campaign_id=campaign_id,
+        end_date=end_date,
+        start_date=start_date,
+        clear_end_date=clear_end_date,
+        dry_run=dry_run,
+    )
+    if rejected:
+        return rejected
+    res = update_campaign_dates(req)
+    return res.model_dump_json(indent=2)
+
 # [write] Create a Shopping campaign on the Merchant Center feed: always paused, Maximize Clicks with a ceiling, countries from the policy (shopping.default_geo), schedule from the policy (ads.schedule_windows), one ad group and a product ad. Products: only the chosen ones (offers) or the whole feed with an explicit all_products. check_shopping_readiness and a check of the offer IDs against the catalog run before anything is written.
 @mcp_tool()
 def create_shopping_campaign(
@@ -297,6 +329,29 @@ def create_shopping_campaign(
     if rejected:
         return rejected
     res = create_shopping_func(req)
+    return res.model_dump_json(indent=2)
+
+@mcp_tool()
+def set_shopping_product_selection(
+    ad_group_id: str,
+    offers: List[str],
+    cpc_ceiling_eur: Optional[float] = None,
+    dry_run: bool = False
+) -> str:
+    """
+    Updates the product partition tree in an existing Shopping ad group to advertise exactly the specified offers (offer IDs
+    like SKU-100-S, SKU-100-L). All other feed products are excluded under the negative 'everything else' node.
+    Validates offer IDs against Merchant Center catalog before mutating.
+    dry_run=True checks and validates the mutation via Google Ads validate_only without writing to the account.
+    """
+    req, rejected = build_request(
+        "set_shopping_product_selection", SetShoppingProductSelectionRequest,
+        ad_group_id=ad_group_id, offers=offers,
+        cpc_ceiling_eur=cpc_ceiling_eur, dry_run=dry_run
+    )
+    if rejected:
+        return rejected
+    res = set_shopping_product_selection_func(req)
     return res.model_dump_json(indent=2)
 
 # --- LEVEL 2: ADGROUP & BIDDING TOOLS ---
@@ -425,6 +480,36 @@ def set_ad_group_status(ad_group_id: str, enabled: bool) -> str:
         return rejected
     res = update_ad_group_status(req)
     return res.model_dump_json(indent=2)
+
+
+@mcp_tool()
+def set_ad_group_audience_targeting(
+    ad_group_id: str,
+    user_list_ids: List[str],
+    targeting_mode: Literal["TARGETING", "OBSERVATION"] = "TARGETING",
+    bid_modifier: Optional[float] = None
+) -> str:
+    """
+    Configures audience targeting for an ad group (Search or Shopping).
+    Supports:
+    - TARGETING mode (narrow reach strictly to audience segments only - pure retargeting).
+    - OBSERVATION mode (do not narrow reach, bid adjustments only).
+    user_list_ids: list of audience UserList IDs (e.g. from user_list entity).
+    bid_modifier: optional bid multiplier in OBSERVATION mode (e.g. 1.5 for +50%, 1.8 for +80%).
+    """
+    req, rejected = build_request(
+        "set_ad_group_audience_targeting",
+        AdGroupAudienceTargetingRequest,
+        ad_group_id=ad_group_id,
+        user_list_ids=user_list_ids,
+        targeting_mode=targeting_mode,
+        bid_modifier=bid_modifier
+    )
+    if rejected:
+        return rejected
+    res = audience_targeting_func(req)
+    return res.model_dump_json(indent=2)
+
 
 # --- LEVEL 3: RSA ADS TOOLS ---
 
@@ -659,6 +744,67 @@ def create_structured_snippet_asset(campaign_id: str, header: str, values: List[
     if rejected:
         return rejected
     res = create_snippet_func(req)
+    return res.model_dump_json(indent=2)
+
+# [write] Promotion asset: create (or reuse identical) and optionally link to a campaign or ad group; supports dry_run preview and read-back verification.
+@mcp_tool()
+def create_promotion_asset(
+    name: str,
+    promotion_target: str,
+    final_url: str,
+    language_code: str = "de",
+    percent_off: Optional[int] = None,
+    money_amount_off_eur: Optional[float] = None,
+    currency_code: str = "EUR",
+    discount_modifier: Optional[str] = None,
+    promotion_code: Optional[str] = None,
+    orders_over_eur: Optional[float] = None,
+    occasion: Optional[str] = None,
+    redemption_start_date: Optional[str] = None,
+    redemption_end_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    ad_group_id: Optional[str] = None,
+    dry_run: bool = False
+) -> str:
+    """
+    Creates a Promotion Asset (PROMOTION extension) in Google Ads, reads it back to confirm stored fields,
+    and optionally links it to a Campaign (campaign_id) or Ad Group (ad_group_id). Reuses an identical existing
+    promotion asset instead of creating duplicates.
+    - promotion_target: promoted item/category (max 20 chars).
+    - Discount: provide exactly one of percent_off (integer 1-100, stored in API as percent_off * 10,000) or money_amount_off_eur.
+    - Trigger (optional): at most one of promotion_code (max 15 chars; omit for automatic sales without a code) or orders_over_eur.
+    - Dates: ISO YYYY-MM-DD (redemption_start_date / redemption_end_date shown on ad; start_date / end_date serving window).
+    - occasion: optional Google enum (e.g. BLACK_FRIDAY, CYBER_MONDAY, CHRISTMAS, WINTER_SALE).
+    - Policy ads.url_rules forbid_query / forbid_text rules are enforced before calling Google.
+    - dry_run=True validates everything and previews the action without writing to Google Ads.
+    """
+    req, rejected = build_request(
+        "create_promotion_asset",
+        CreatePromotionAssetRequest,
+        name=name,
+        promotion_target=promotion_target,
+        final_url=final_url,
+        language_code=language_code,
+        percent_off=percent_off,
+        money_amount_off_eur=money_amount_off_eur,
+        currency_code=currency_code,
+        discount_modifier=discount_modifier,
+        promotion_code=promotion_code,
+        orders_over_eur=orders_over_eur,
+        occasion=occasion,
+        redemption_start_date=redemption_start_date,
+        redemption_end_date=redemption_end_date,
+        start_date=start_date,
+        end_date=end_date,
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        dry_run=dry_run,
+    )
+    if rejected:
+        return rejected
+    res = create_promotion_func(req)
     return res.model_dump_json(indent=2)
 
 # [write] Smart Facade: atomic price sync (create + find old + unlink + link)
