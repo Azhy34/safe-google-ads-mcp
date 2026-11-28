@@ -327,6 +327,7 @@ def get_daily_performance(days: int = 14, customer_id: str = CUSTOMER_ID) -> Lis
         SELECT
             segments.date,
             segments.day_of_week,
+            campaign.id,
             campaign.name,
             metrics.cost_micros,
             metrics.impressions,
@@ -342,6 +343,7 @@ def get_daily_performance(days: int = 14, customer_id: str = CUSTOMER_ID) -> Lis
         output.append({
             "date": row.segments.date,
             "day_of_week": row.segments.day_of_week.name if hasattr(row.segments.day_of_week, "name") else str(row.segments.day_of_week),
+            "campaign_id": str(row.campaign.id),  # key of the CRM sheet row: names repeat and change, the ID does not
             "campaign": row.campaign.name,
             "cost_eur": round((row.metrics.cost_micros or 0) / 1_000_000.0, 2),
             "clicks": row.metrics.clicks or 0,

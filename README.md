@@ -1,9 +1,10 @@
 # 🛡️ Safe Google Ads FastMCP Server
-> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor) to safely inspect, optimize, and manage live search campaigns with **two-layer deterministic execution shields**, **63 purpose-built tools**, and **W3C distributed tracing**.
+> **Enterprise-grade FastMCP server for the Google Ads API.** Empowers autonomous AI agents (Claude Code, Antigravity, Cursor, and any MCP client) to safely inspect, optimize, and manage live search & shopping campaigns with **two-layer deterministic execution shields**, **63 purpose-built tools**, **Skills over MCP (SEP-2640)**, and **W3C distributed tracing**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/Protocol-Model%20Context%20Protocol-green.svg)](https://modelcontextprotocol.io)
+[![Skills over MCP](https://img.shields.io/badge/Skills%20over%20MCP-SEP--2640-purple.svg)](core/skills_provider.py)
 [![Observability: W3C Trace](https://img.shields.io/badge/Tracing-W3C%20Distributed%20Trace-orange.svg)](https://www.w3.org/TR/trace-context/)
 
 ---
@@ -151,9 +152,13 @@ The tools mirror Google Ads operational hierarchy, split into granular objects a
 
 ---
 
-## 🧠 Autonomous Agent Skills & Playbooks (`skills/`)
+## 🧠 Skills over MCP: Autonomous Agent Playbooks (`skills/` + `core/skills_provider.py`)
 
-While MCP tools provide the **execution layer** (the hands), these bundled Agent Skills provide the **deterministic business playbook** (the brain) for autonomous coding agents (Claude Code, Antigravity, Cursor):
+While MCP tools provide the **execution layer** (the hands), these bundled Agent Skills provide the **deterministic business playbook** (the brain).
+
+Built on the **Skills over MCP (SEP-2640)** standard via [`core/skills_provider.py`](core/skills_provider.py), **you no longer need to duplicate or copy skill folders per client** (`.claude/skills/`, `.agent/skills/`, `.cursor/rules/`). Connecting this MCP server automatically delivers all 10 playbooks and 12 reference docs to **any MCP-compatible agent** using progressive disclosure:
+- **Level 1 (Discovery):** Compact skill catalog injected into `InitializeResult.instructions` + full SEP-2640 manifest (`uri`, `frontmatter`, SHA-256 digests) at `skill://_index.json`.
+- **Level 2 & 3 (On-demand loading):** Every `SKILL.md` and `references/*.md` is exposed as a read-only MCP Resource (`skill://<name>/<path>`) with path-traversal protection and loaded lazily via `resources/read` only when needed.
 
 | Skill Name | SOP Path | Playbook Description |
 |---|---|---|

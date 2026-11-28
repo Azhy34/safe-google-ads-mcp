@@ -18,6 +18,7 @@ sys.path.insert(0, str(CURRENT_DIR))
 
 from core import policy
 from core.config import CUSTOMER_ID, MERCHANT_CENTER_ID
+from core.skills_provider import register_skills_over_mcp
 from shield.error_shield import build_request
 from shield.telemetry import current_tool
 from shield import cloud_sink
@@ -1272,6 +1273,9 @@ def check_shopping_readiness(
         return rejected
     res = shopping_readiness_func(req)
     return res.model_dump_json(indent=2)
+
+# Expose bundled Agent Skills (skills/*/SKILL.md + references/*.md) over MCP Resources (SEP-2640 structure)
+register_skills_over_mcp(mcp, skills_dir=CURRENT_DIR / "skills")
 
 if __name__ == "__main__":
     cloud_sink.start()
